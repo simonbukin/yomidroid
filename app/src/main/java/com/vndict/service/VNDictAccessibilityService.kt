@@ -1,0 +1,752 @@
+package com.vndict.service
+
+import android.accessibilityservice.AccessibilityService
+import android.animation.ValueAnimator
+import android.content.res.Configuration
+import android.graphics.Bitmap
+import android.graphics.PixelFormat
+import android.graphics.Rect
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.util.DisplayMetrics
+import android.util.Log
+import android.view.Display
+import android.view.Gravity
+import android.view.MotionEvent
+import android.view.VelocityTracker
+import android.view.View
+import android.view.WindowManager
+import android.view.accessibility.AccessibilityEvent
+import android.view.animation.DecelerateInterpolator
+import android.widget.Toast
+import kotlin.math.abs
+import kotlin.math.sign
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.Text
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.japanese.JapaneseTextRecognizerOptions
+import com.vndict.anki.AnkiDroidExporter
+import com.vndict.anki.ExportResult
+import com.vndict.config.ColorConfig
+import com.vndict.config.ColorConfigManager
+import com.vndict.dictionary.DictionaryEngine
+import com.vndict.ocr.OcrResult
+
+class VNDictAccessibilityService : AccessibilityService() {
+
+    // Word snapping cache entry - stores lookup results for instant word highlighting
+    private data class CachedLookup(
+        val matchLength: Int,
+        val entry: com.vndict.dictionary.DictionaryEntry?
+    )
+
+    companion object {
+        private const val TAG = "VNDict"
+
+        @Volatile
+        var instance: VNDictAccessibilityService? = null
+            private set
+
+        val isRunning: Boolean
+            get() = instance != null
+    }
+
+    private val windowManager by lazy { getSystemService(WINDOW_SERVICE) as WindowManager }
+    private val handler = Handler(Looper.getMainLooper())
+
+    private var fabView: CursorFabView? = null
+    private var overlayView: OverlayTextView? = null
+    private var fabParams: WindowManager.LayoutParams? = null
+    private var fabTouchListener: FabTouchListener? = null
+
+    private var screenWidth = 0
+    private var screenHeight = 0
+    private var statusBarHeight = 0
+
+    // For double-tap detection
+    private var lastTapTime = 0L
+    private val doubleTapTimeout = 300L
+
+    // Store current OCR results for cursor-based lookup
+    private var currentOcrResults: List<OcrResult> = emptyList()
+
+    // Keep clean screenshot for Anki export
+    private var currentScreenshot: Bitmap? = null
+
+    private val textRecognizer by lazy {
+        TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build())
+    }
+
+    private var dictionaryEngine: DictionaryEngine? = null
+    private var ankiExporter: AnkiDroidExporter? = null
+    private var colorConfigManager: ColorConfigManager? = null
+    private var colorConfig: ColorConfig = ColorConfig()
+
+    override fun onServiceConnected() {
+        super.onServiceConnected()
+        Log.d(TAG, "Accessibility service connected")
+        instance = this
+
+        // Get screen metrics
+        val metrics = DisplayMetrics()
+        @Suppress("DEPRECATION")
+        windowManager.defaultDisplay.getRealMetrics(metrics)
+        screenWidth = metrics.widthPixels
+        screenHeight = metrics.heightPixels
+
+        // Get status bar height for coordinate alignment
+        statusBarHeight = getStatusBarHeight()
+        Log.d(TAG, "Status bar height: $statusBarHeight")
+
+        // Initialize dictionary engine
+        dictionaryEngine = DictionaryEngine(this)
+
+        // Initialize Anki exporter
+        ankiExporter = AnkiDroidExporter(this)
+
+        // Initialize color config and load saved colors
+        colorConfigManager = ColorConfigManager(this)
+        loadColors()
+
+        // Create FAB
+        createFab()
+    }
+
+    /**
+     * Reload colors from saved config (call when settings change).
+     */
+    fun loadColors() {
+        colorConfig = colorConfigManager?.getConfig() ?: ColorConfig()
+        // Update FAB colors if it exists
+        fabView?.updateColors(
+            fabColor = colorConfig.fabColor,
+            cursorDotColor = colorConfig.cursorDotColor,
+            accentColor = colorConfig.accentColor
+        )
+        // Update overlay highlight color if it exists
+        overlayView?.updateHighlightColor(colorConfig.highlightColor)
+    }
+
+    private fun getStatusBarHeight(): Int {
+        val resourceId = resources.getIdentifier("status_bar_height", "dimen", "android")
+        return if (resourceId > 0) {
+            resources.getDimensionPixelSize(resourceId)
+        } else {
+            // Fallback to a reasonable default (24dp)
+            (24 * resources.displayMetrics.density).toInt()
+        }
+    }
+
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        // We don't need to process accessibility events
+        // We only use this service for takeScreenshot()
+    }
+
+    override fun onInterrupt() {
+        Log.d(TAG, "Accessibility service interrupted")
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        Log.d(TAG, "Configuration changed: orientation=${newConfig.orientation}")
+
+        // Update screen dimensions
+        val metrics = DisplayMetrics()
+        @Suppress("DEPRECATION")
+        windowManager.defaultDisplay.getRealMetrics(metrics)
+        screenWidth = metrics.widthPixels
+        screenHeight = metrics.heightPixels
+
+        // Update FAB position to stay on screen
+        updateFabPositionForNewDimensions()
+
+        // Dismiss overlay if visible (coordinates won't match anymore)
+        if (overlayView != null) {
+            removeOverlay()
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        Log.d(TAG, "Accessibility service destroyed")
+        instance = null
+
+        removeFab()
+        removeOverlay()
+        textRecognizer.close()
+    }
+
+    private fun createFab() {
+        Log.d(TAG, "createFab called, screenWidth=$screenWidth, screenHeight=$screenHeight")
+
+        fabView = CursorFabView(this)
+
+        // Let the view measure itself
+        fabView?.measure(
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+        )
+        val fabWidth = fabView?.measuredWidth ?: 200
+        val fabHeight = fabView?.measuredHeight ?: 200
+
+        fabParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,  // Same coord system as overlay
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = screenWidth - fabWidth - 16
+            y = screenHeight / 2 - fabHeight / 2
+        }
+
+        try {
+            // Apply configured colors
+            fabView?.updateColors(
+                fabColor = colorConfig.fabColor,
+                cursorDotColor = colorConfig.cursorDotColor,
+                accentColor = colorConfig.accentColor
+            )
+
+            fabTouchListener = FabTouchListener()
+            fabView?.setOnTouchListener(fabTouchListener)
+            windowManager.addView(fabView, fabParams)
+            Log.d(TAG, "FAB added successfully, size: ${fabWidth}x${fabHeight}")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to add FAB: ${e.message}", e)
+        }
+    }
+
+    private fun removeFab() {
+        fabView?.let {
+            try {
+                windowManager.removeView(it)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to remove FAB: ${e.message}")
+            }
+        }
+        fabView = null
+    }
+
+    private fun updateFabPositionForNewDimensions() {
+        val params = fabParams ?: return
+        val fab = fabView ?: return
+        val fabWidth = fab.width.takeIf { it > 0 } ?: fab.measuredWidth
+        val fabHeight = fab.height.takeIf { it > 0 } ?: fab.measuredHeight
+
+        // Clamp FAB position to stay fully on screen
+        params.x = params.x.coerceIn(0, screenWidth - fabWidth)
+        params.y = params.y.coerceIn(0, screenHeight - fabHeight)
+
+        try {
+            windowManager.updateViewLayout(fab, params)
+            Log.d(TAG, "Updated FAB position for new dimensions: ${screenWidth}x${screenHeight}")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to update FAB position: ${e.message}")
+        }
+    }
+
+    private fun captureScreen() {
+        Log.d(TAG, "captureScreen called")
+
+        // Check API level
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            Toast.makeText(this, "Screenshot requires Android 11+", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        // Hide FAB before capture
+        fabView?.visibility = View.INVISIBLE
+
+        // Small delay to ensure FAB is hidden
+        handler.postDelayed({
+            takeScreenshotAndProcess()
+        }, 100)
+    }
+
+    private fun takeScreenshotAndProcess() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            takeScreenshot(
+                Display.DEFAULT_DISPLAY,
+                mainExecutor,
+                object : TakeScreenshotCallback {
+                    override fun onSuccess(result: ScreenshotResult) {
+                        Log.d(TAG, "Screenshot success")
+                        fabView?.visibility = View.VISIBLE
+
+                        try {
+                            val hardwareBuffer = result.hardwareBuffer
+                            val colorSpace = result.colorSpace
+
+                            val bitmap = Bitmap.wrapHardwareBuffer(hardwareBuffer, colorSpace)
+                            if (bitmap != null) {
+                                // Convert to software bitmap for ML Kit
+                                val softwareBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, false)
+                                Log.d(TAG, "Processing OCR on bitmap ${softwareBitmap.width}x${softwareBitmap.height}")
+                                processOcr(softwareBitmap)
+                            } else {
+                                Log.e(TAG, "Failed to create bitmap from hardware buffer")
+                            }
+
+                            hardwareBuffer.close()
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error processing screenshot: ${e.message}", e)
+                        }
+                    }
+
+                    override fun onFailure(errorCode: Int) {
+                        Log.e(TAG, "Screenshot failed with error code: $errorCode")
+                        fabView?.visibility = View.VISIBLE
+
+                        val errorMsg = when (errorCode) {
+                            ERROR_TAKE_SCREENSHOT_INTERNAL_ERROR -> "Internal error"
+                            ERROR_TAKE_SCREENSHOT_NO_ACCESSIBILITY_ACCESS -> "No accessibility access"
+                            ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT -> "Too fast, wait a moment"
+                            ERROR_TAKE_SCREENSHOT_INVALID_DISPLAY -> "Invalid display"
+                            ERROR_TAKE_SCREENSHOT_INVALID_WINDOW -> "Invalid window"
+                            else -> "Unknown error ($errorCode)"
+                        }
+
+                        handler.post {
+                            Toast.makeText(
+                                this@VNDictAccessibilityService,
+                                "Screenshot failed: $errorMsg",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    }
+                }
+            )
+        }
+    }
+
+    private fun processOcr(bitmap: Bitmap) {
+        val inputImage = InputImage.fromBitmap(bitmap, 0)
+
+        textRecognizer.process(inputImage)
+            .addOnSuccessListener { visionText ->
+                Log.d(TAG, "OCR success, found ${visionText.textBlocks.size} blocks")
+                val results = extractOcrResults(visionText)
+                if (results.isNotEmpty()) {
+                    showTextOverlay(results, bitmap)
+                } else {
+                    Log.d(TAG, "No OCR results found")
+                    Toast.makeText(this, "No text found", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .addOnFailureListener { e ->
+                Log.e(TAG, "OCR failed: ${e.message}", e)
+            }
+    }
+
+    private fun extractOcrResults(visionText: Text): List<OcrResult> {
+        val results = mutableListOf<OcrResult>()
+
+        for (block in visionText.textBlocks) {
+            for (line in block.lines) {
+                val lineText = line.text
+                val charBounds = mutableListOf<Rect>()
+
+                for (element in line.elements) {
+                    for (symbol in element.symbols) {
+                        symbol.boundingBox?.let { charBounds.add(it) }
+                    }
+                }
+
+                if (charBounds.size == lineText.length) {
+                    line.boundingBox?.let { lineBounds ->
+                        results.add(OcrResult(lineText, lineBounds, charBounds))
+                    }
+                } else if (charBounds.isNotEmpty()) {
+                    line.boundingBox?.let { lineBounds ->
+                        results.add(OcrResult(lineText, lineBounds, charBounds))
+                    }
+                }
+            }
+        }
+
+        return results
+    }
+
+    private fun showTextOverlay(results: List<OcrResult>, screenshot: Bitmap) {
+        removeOverlay()
+
+        // Clear lookup cache for new overlay
+        fabTouchListener?.clearCache()
+
+        // Update screen dimensions (in case orientation changed)
+        val metrics = DisplayMetrics()
+        @Suppress("DEPRECATION")
+        windowManager.defaultDisplay.getRealMetrics(metrics)
+        val oldWidth = screenWidth
+        val oldHeight = screenHeight
+        screenWidth = metrics.widthPixels
+        screenHeight = metrics.heightPixels
+
+        // If dimensions changed, update FAB position to stay on screen
+        if (oldWidth != screenWidth || oldHeight != screenHeight) {
+            updateFabPositionForNewDimensions()
+        }
+
+        // Store results for cursor-based lookup
+        currentOcrResults = results
+
+        // Store clean screenshot for Anki export
+        currentScreenshot = screenshot
+
+        // Calculate scale factors for coordinate transformation
+        // This maps ML Kit bounding boxes (in bitmap space) to screen coordinates
+        val scaleX = screenWidth.toFloat() / screenshot.width
+        val scaleY = screenHeight.toFloat() / screenshot.height
+        Log.d(TAG, "Scale factors: scaleX=$scaleX, scaleY=$scaleY " +
+                   "(screen: ${screenWidth}x${screenHeight}, " +
+                   "bitmap: ${screenshot.width}x${screenshot.height})")
+
+        overlayView = OverlayTextView(
+            context = this,
+            ocrResults = results,
+            screenshot = screenshot,
+            scaleX = scaleX,
+            scaleY = scaleY,
+            highlightColor = colorConfig.highlightColor,
+            onTextTapped = { text, charIndex ->
+                onTextTapped(text, charIndex)
+            },
+            onDismissRequested = {
+                removeOverlay()
+            },
+            onAnkiExport = { entry, sentence ->
+                exportToAnki(entry, sentence)
+            }
+        )
+
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        )
+
+        windowManager.addView(overlayView, params)
+
+        // Bring FAB to front so it's above the overlay
+        fabView?.let {
+            try {
+                windowManager.removeView(it)
+                windowManager.addView(it, fabParams)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to bring FAB to front: ${e.message}")
+            }
+        }
+    }
+
+    private fun removeOverlay() {
+        overlayView?.let {
+            try {
+                windowManager.removeView(it)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to remove overlay: ${e.message}")
+            }
+        }
+        overlayView = null
+        currentOcrResults = emptyList()
+        currentScreenshot = null
+
+        // Clear lookup cache when overlay is dismissed
+        fabTouchListener?.clearCache()
+    }
+
+    private fun exportToAnki(entry: com.vndict.dictionary.DictionaryEntry, sentence: String) {
+        val exporter = ankiExporter ?: return
+        val overlay = overlayView ?: return
+
+        // Set loading state immediately
+        overlay.setAnkiButtonLoading()
+
+        Thread {
+            val result = exporter.exportCard(entry, sentence, currentScreenshot)
+
+            handler.post {
+                when (result) {
+                    is ExportResult.Success -> {
+                        overlay.setAnkiButtonSuccess()
+                        Toast.makeText(this, "Added to Anki!", Toast.LENGTH_SHORT).show()
+                    }
+                    is ExportResult.AlreadyExists -> {
+                        overlay.setAnkiButtonAlreadyExported()
+                        Toast.makeText(this, "Already in Anki", Toast.LENGTH_SHORT).show()
+                    }
+                    is ExportResult.AnkiNotInstalled -> {
+                        overlay.resetAnkiButtonState()
+                        Toast.makeText(this, "AnkiDroid not installed", Toast.LENGTH_LONG).show()
+                        // Open Play Store
+                        try {
+                            val intent = exporter.getPlayStoreIntent()
+                            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                            startActivity(intent)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to open Play Store: ${e.message}")
+                        }
+                    }
+                    is ExportResult.NotConfigured -> {
+                        overlay.resetAnkiButtonState()
+                        Toast.makeText(this, "Configure Anki in VNDict settings", Toast.LENGTH_LONG).show()
+                    }
+                    is ExportResult.PermissionDenied -> {
+                        overlay.resetAnkiButtonState()
+                        Toast.makeText(this, "AnkiDroid permission denied", Toast.LENGTH_LONG).show()
+                    }
+                    is ExportResult.Error -> {
+                        overlay.resetAnkiButtonState()
+                        Toast.makeText(this, "Export failed: ${result.message}", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+        }.start()
+    }
+
+    private fun onTextTapped(fullText: String, charIndex: Int) {
+        Thread {
+            val searchText = fullText.substring(charIndex)
+            val entries = dictionaryEngine?.findTerms(searchText) ?: emptyList()
+
+            handler.post {
+                if (entries.isNotEmpty()) {
+                    overlayView?.showDefinition(entries.first(), charIndex)
+                } else {
+                    overlayView?.showNoResults()
+                }
+            }
+        }.start()
+    }
+
+    private inner class FabTouchListener : View.OnTouchListener {
+        private var initialX = 0
+        private var initialY = 0
+        private var initialTouchX = 0f
+        private var initialTouchY = 0f
+        private var isClick = true
+        private var lastLookedUpText: String? = null
+        private var lastLookedUpIndex: Int = -1
+
+        // Physics-based movement
+        private var velocityTracker: VelocityTracker? = null
+        private var flingAnimator: ValueAnimator? = null
+
+        // Word snapping cache - stores lookup results for instant word highlighting
+        private val lookupCache = mutableMapOf<String, CachedLookup>()
+        private val maxCacheSize = 100
+
+        private fun getCacheKey(text: String, charIndex: Int) = "$text:$charIndex"
+
+        fun clearCache() {
+            lookupCache.clear()
+        }
+
+        override fun onTouch(view: View, event: MotionEvent): Boolean {
+            val params = fabParams ?: return false
+
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    // Cancel any ongoing fling
+                    flingAnimator?.cancel()
+
+                    // Start tracking velocity
+                    velocityTracker?.recycle()
+                    velocityTracker = VelocityTracker.obtain()
+                    velocityTracker?.addMovement(event)
+
+                    initialX = params.x
+                    initialY = params.y
+                    initialTouchX = event.rawX
+                    initialTouchY = event.rawY
+                    isClick = true
+                    return true
+                }
+
+                MotionEvent.ACTION_MOVE -> {
+                    velocityTracker?.addMovement(event)
+
+                    val dx = (event.rawX - initialTouchX).toInt()
+                    val dy = (event.rawY - initialTouchY).toInt()
+
+                    if (abs(dx) > 10 || abs(dy) > 10) {
+                        isClick = false
+                        params.x = initialX + dx
+                        params.y = initialY + dy
+                        windowManager.updateViewLayout(view, params)
+
+                        // Perform cursor-based lookup if overlay is visible
+                        if (overlayView != null) {
+                            lookupAtCursor()
+                        }
+                    }
+                    return true
+                }
+
+                MotionEvent.ACTION_UP -> {
+                    velocityTracker?.addMovement(event)
+                    velocityTracker?.computeCurrentVelocity(1000)  // pixels per second
+
+                    if (isClick) {
+                        val now = System.currentTimeMillis()
+                        if (now - lastTapTime < doubleTapTimeout) {
+                            // Double tap - toggle cursor side (don't dismiss!)
+                            fabView?.toggleCursorSide()
+                            Log.d(TAG, "Double tap - toggled cursor side")
+                        } else {
+                            // Single tap - only scan if no overlay, don't dismiss
+                            if (overlayView == null) {
+                                captureScreen()
+                            }
+                            // If overlay is visible, do nothing - let user tap on overlay to dismiss
+                        }
+                        lastTapTime = now
+                    } else {
+                        // Drag ended - apply physics fling
+                        val vx = velocityTracker?.xVelocity ?: 0f
+                        val vy = velocityTracker?.yVelocity ?: 0f
+
+                        if (abs(vx) > 200 || abs(vy) > 200) {
+                            applyFling(view, params, vx, vy)
+                        }
+
+                        // Perform final lookup
+                        if (overlayView != null) {
+                            lookupAtCursor()
+                        }
+                    }
+
+                    velocityTracker?.recycle()
+                    velocityTracker = null
+                    return true
+                }
+            }
+            return false
+        }
+
+        private fun applyFling(view: View, params: WindowManager.LayoutParams, vx: Float, vy: Float) {
+            val startX = params.x.toFloat()
+            val startY = params.y.toFloat()
+
+            // Calculate target position based on velocity (with damping)
+            val damping = 0.15f  // How far the fling carries
+            var targetX = startX + vx * damping
+            var targetY = startY + vy * damping
+
+            // Soft bounds - keep most of FAB on screen
+            val fabWidth = fabView?.width ?: 100
+            val fabHeight = fabView?.height ?: 100
+            val margin = 20  // Keep at least this much visible
+            targetX = targetX.coerceIn((-fabWidth + margin).toFloat(), (screenWidth - margin).toFloat())
+            targetY = targetY.coerceIn((-fabHeight + margin).toFloat(), (screenHeight - margin).toFloat())
+
+            flingAnimator?.cancel()
+            flingAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+                duration = 300
+                interpolator = DecelerateInterpolator(2f)
+                addUpdateListener { animator ->
+                    val progress = animator.animatedValue as Float
+                    params.x = (startX + (targetX - startX) * progress).toInt()
+                    params.y = (startY + (targetY - startY) * progress).toInt()
+
+                    try {
+                        windowManager.updateViewLayout(view, params)
+
+                        // Update cursor lookup during fling
+                        if (overlayView != null) {
+                            lookupAtCursor()
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error updating view during fling: ${e.message}")
+                    }
+                }
+                start()
+            }
+        }
+
+        private fun lookupAtCursor() {
+            val fab = fabView ?: return
+            val overlay = overlayView ?: return
+
+            val cursorX = fab.getCursorScreenX()
+            val cursorY = fab.getCursorScreenY()
+
+            // Find text at cursor without modifying highlight yet
+            val textInfo = overlay.findTextAtCursor(cursorX, cursorY)
+
+            if (textInfo == null) {
+                // Cursor not over any text - clear highlight
+                if (lastLookedUpText != null) {
+                    lastLookedUpText = null
+                    lastLookedUpIndex = -1
+                    overlay.clearHighlight()
+                }
+                return
+            }
+
+            val (ocrResult, charIndex, _) = textInfo
+
+            // Skip if same position
+            if (ocrResult.text == lastLookedUpText && charIndex == lastLookedUpIndex) {
+                return
+            }
+
+            lastLookedUpText = ocrResult.text
+            lastLookedUpIndex = charIndex
+
+            val cacheKey = getCacheKey(ocrResult.text, charIndex)
+
+            // Check cache first for instant word snapping
+            val cached = lookupCache[cacheKey]
+            if (cached != null) {
+                // Cache hit - immediately highlight full word
+                overlay.setHighlight(ocrResult, charIndex, cached.matchLength)
+                if (cached.entry != null) {
+                    overlay.showDefinitionAtCursor(cached.entry, cursorX, cursorY)
+                } else {
+                    overlay.hideDefinition()
+                }
+                return
+            }
+
+            // Cache miss - show single char highlight immediately as fallback
+            overlay.setHighlight(ocrResult, charIndex, 1)
+
+            // Perform dictionary lookup on background thread
+            Thread {
+                val searchText = ocrResult.text.substring(charIndex)
+                val entries = dictionaryEngine?.findTerms(searchText) ?: emptyList()
+                val entry = entries.firstOrNull()
+                val matchLength = entry?.matchedText?.length ?: 1
+
+                // Cache the result
+                synchronized(lookupCache) {
+                    if (lookupCache.size > maxCacheSize) {
+                        lookupCache.clear()  // Simple eviction
+                    }
+                    lookupCache[cacheKey] = CachedLookup(matchLength, entry)
+                }
+
+                handler.post {
+                    // Verify cursor hasn't moved before updating
+                    if (ocrResult.text == lastLookedUpText && charIndex == lastLookedUpIndex) {
+                        overlay.setHighlight(ocrResult, charIndex, matchLength)
+                        if (entry != null) {
+                            overlay.showDefinitionAtCursor(entry, cursorX, cursorY)
+                        } else {
+                            overlay.hideDefinition()
+                        }
+                    }
+                }
+            }.start()
+        }
+    }
+}
