@@ -66,18 +66,13 @@ class CursorFabView(context: Context) : View(context) {
     }
 
     /**
-     * Get the cursor position in screen coordinates.
-     * Cursor is at the edge of the view for maximum reach.
+     * Get the cursor X position in screen coordinates.
+     * Returns the horizontal center of the FAB (cursor dot is centered below/above).
      */
     fun getCursorScreenX(): Float {
         val location = IntArray(2)
         getLocationOnScreen(location)
-        val cursorX = location[0] + width / 2f
-        // Debug log occasionally
-        if (System.currentTimeMillis() % 2000 < 30) {
-            android.util.Log.d("Yomidroid", "FAB: location[0]=${location[0]}, width=$width, cursorX=$cursorX")
-        }
-        return cursorX
+        return location[0] + width / 2f
     }
 
     fun getCursorScreenY(): Float {

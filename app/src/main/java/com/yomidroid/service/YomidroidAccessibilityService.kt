@@ -21,7 +21,11 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.animation.DecelerateInterpolator
 import android.widget.Toast
 import kotlin.math.abs
-import kotlin.math.sign
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.Text
 import com.google.mlkit.vision.text.TextRecognition
@@ -44,6 +48,13 @@ class YomidroidAccessibilityService : AccessibilityService() {
     companion object {
         private const val TAG = "Yomidroid"
 
+        // Timing constants
+        private const val DOUBLE_TAP_TIMEOUT_MS = 300L
+        private const val FAB_HIDE_DELAY_MS = 100L
+
+        // Cache limits
+        private const val MAX_LOOKUP_CACHE_SIZE = 100
+
         @Volatile
         var instance: YomidroidAccessibilityService? = null
             private set
@@ -51,6 +62,10 @@ class YomidroidAccessibilityService : AccessibilityService() {
         val isRunning: Boolean
             get() = instance != null
     }
+
+    // Coroutine scope for background operations (file I/O, database writes)
+    // Uses SupervisorJob so one failed child doesn't cancel siblings
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val windowManager by lazy { getSystemService(WINDOW_SERVICE) as WindowManager }
     private val handler = Handler(Looper.getMainLooper())
@@ -66,7 +81,6 @@ class YomidroidAccessibilityService : AccessibilityService() {
 
     // For double-tap detection
     private var lastTapTime = 0L
-    private val doubleTapTimeout = 300L
 
     // Store current OCR results for cursor-based lookup
     private var currentOcrResults: List<OcrResult> = emptyList()
@@ -172,6 +186,9 @@ class YomidroidAccessibilityService : AccessibilityService() {
         Log.d(TAG, "Accessibility service destroyed")
         instance = null
 
+        // Cancel all pending coroutines
+        serviceScope.cancel()
+
         removeFab()
         removeOverlay()
         textRecognizer.close()
@@ -222,6 +239,9 @@ class YomidroidAccessibilityService : AccessibilityService() {
     }
 
     private fun removeFab() {
+        // Cancel any ongoing fling animation to prevent callbacks after removal
+        fabTouchListener?.cancelFling()
+
         fabView?.let {
             try {
                 windowManager.removeView(it)
@@ -262,10 +282,10 @@ class YomidroidAccessibilityService : AccessibilityService() {
         // Hide FAB before capture
         fabView?.visibility = View.INVISIBLE
 
-        // Small delay to ensure FAB is hidden
+        // Small delay to ensure FAB is hidden before screenshot capture
         handler.postDelayed({
             takeScreenshotAndProcess()
-        }, 100)
+        }, FAB_HIDE_DELAY_MS)
     }
 
     private fun takeScreenshotAndProcess() {
@@ -525,43 +545,42 @@ class YomidroidAccessibilityService : AccessibilityService() {
         // Capture screenshot reference before it might be nulled
         val screenshot = currentScreenshot
 
-        Thread {
-            kotlinx.coroutines.runBlocking {
-                try {
-                    // Save screenshot to persistent storage
-                    var screenshotPath: String? = null
-                    if (screenshot != null) {
-                        val timestamp = System.currentTimeMillis()
-                        val screenshotDir = java.io.File(filesDir, "history_screenshots")
-                        if (!screenshotDir.exists()) {
-                            screenshotDir.mkdirs()
-                        }
-                        val screenshotFile = java.io.File(screenshotDir, "history_${timestamp}.jpg")
-                        try {
-                            java.io.FileOutputStream(screenshotFile).use { out ->
-                                screenshot.compress(Bitmap.CompressFormat.JPEG, 80, out)
-                            }
-                            screenshotPath = screenshotFile.absolutePath
-                            Log.d(TAG, "Saved screenshot: $screenshotPath")
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Failed to save screenshot: ${e.message}")
-                        }
+        // Use proper coroutine scope instead of Thread+runBlocking
+        serviceScope.launch {
+            try {
+                // Save screenshot to persistent storage
+                var screenshotPath: String? = null
+                if (screenshot != null) {
+                    val timestamp = System.currentTimeMillis()
+                    val screenshotDir = java.io.File(filesDir, "history_screenshots")
+                    if (!screenshotDir.exists()) {
+                        screenshotDir.mkdirs()
                     }
-
-                    val historyRecord = com.yomidroid.data.LookupHistoryEntity(
-                        word = entry.expression,
-                        reading = entry.reading,
-                        definition = entry.glossary.take(3).joinToString("; "),
-                        screenshotPath = screenshotPath,
-                        sentence = sentence.ifEmpty { null }
-                    )
-                    com.yomidroid.data.AppDatabase.getInstance(this@YomidroidAccessibilityService).historyDao().insert(historyRecord)
-                    Log.d(TAG, "Saved to history: ${entry.expression}")
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to save to history: ${e.message}")
+                    val screenshotFile = java.io.File(screenshotDir, "history_${timestamp}.jpg")
+                    try {
+                        java.io.FileOutputStream(screenshotFile).use { out ->
+                            screenshot.compress(Bitmap.CompressFormat.JPEG, 80, out)
+                        }
+                        screenshotPath = screenshotFile.absolutePath
+                        Log.d(TAG, "Saved screenshot: $screenshotPath")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to save screenshot: ${e.message}")
+                    }
                 }
+
+                val historyRecord = com.yomidroid.data.LookupHistoryEntity(
+                    word = entry.expression,
+                    reading = entry.reading,
+                    definition = entry.glossary.take(3).joinToString("; "),
+                    screenshotPath = screenshotPath,
+                    sentence = sentence.ifEmpty { null }
+                )
+                com.yomidroid.data.AppDatabase.getInstance(this@YomidroidAccessibilityService).historyDao().insert(historyRecord)
+                Log.d(TAG, "Saved to history: ${entry.expression}")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to save to history: ${e.message}")
             }
-        }.start()
+        }
     }
 
     private fun onTextTapped(fullText: String, charIndex: Int) {
@@ -594,12 +613,16 @@ class YomidroidAccessibilityService : AccessibilityService() {
 
         // Word snapping cache - stores lookup results for instant word highlighting
         private val lookupCache = mutableMapOf<String, CachedLookup>()
-        private val maxCacheSize = 100
 
         private fun getCacheKey(text: String, charIndex: Int) = "$text:$charIndex"
 
         fun clearCache() {
             lookupCache.clear()
+        }
+
+        fun cancelFling() {
+            flingAnimator?.cancel()
+            flingAnimator = null
         }
 
         override fun onTouch(view: View, event: MotionEvent): Boolean {
@@ -649,7 +672,7 @@ class YomidroidAccessibilityService : AccessibilityService() {
 
                     if (isClick) {
                         val now = System.currentTimeMillis()
-                        if (now - lastTapTime < doubleTapTimeout) {
+                        if (now - lastTapTime < DOUBLE_TAP_TIMEOUT_MS) {
                             // Double tap - toggle cursor side (don't dismiss!)
                             fabView?.toggleCursorSide()
                             Log.d(TAG, "Double tap - toggled cursor side")
@@ -779,10 +802,11 @@ class YomidroidAccessibilityService : AccessibilityService() {
                 val entry = entries.firstOrNull()
                 val matchLength = entry?.matchedText?.length ?: 1
 
-                // Cache the result
+                // Cache the result for instant lookup on subsequent cursor moves
+                // Simple eviction: clear all when limit reached (good enough for ephemeral overlay)
                 synchronized(lookupCache) {
-                    if (lookupCache.size > maxCacheSize) {
-                        lookupCache.clear()  // Simple eviction
+                    if (lookupCache.size > MAX_LOOKUP_CACHE_SIZE) {
+                        lookupCache.clear()
                     }
                     lookupCache[cacheKey] = CachedLookup(matchLength, entry)
                 }

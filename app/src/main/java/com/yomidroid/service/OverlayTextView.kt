@@ -38,7 +38,11 @@ class OverlayTextView(
 
     private val density = context.resources.displayMetrics.density
 
-    // Transform bitmap coordinates to screen coordinates
+    /**
+     * Transform OCR bounding box from bitmap coordinates to screen coordinates.
+     * ML Kit returns bounds in bitmap space; we need screen space for rendering.
+     * scaleX = screenWidth / bitmapWidth, scaleY = screenHeight / bitmapHeight
+     */
     private fun Rect.toScreenCoords(): RectF {
         return RectF(
             left * scaleX,
@@ -53,6 +57,14 @@ class OverlayTextView(
     private var highlightAlpha = 0f
     private var popupAnimator: ValueAnimator? = null
     private var highlightAnimator: ValueAnimator? = null
+
+    // Reusable Paint objects for onDraw (avoid allocations during animation frames)
+    // These are updated with alpha values each frame instead of creating new Paint objects
+    private val animatedHighlightPaint = Paint()
+    private val animatedBorderPaint = Paint()
+    private val selectedHighlightPaint = Paint().apply {
+        style = Paint.Style.FILL
+    }
 
     // Highlight colors
     private val highlightPaint = Paint().apply {
@@ -153,8 +165,12 @@ class OverlayTextView(
     private var lastShownEntry: DictionaryEntry? = null
     private var lastShownSentence: String = ""
 
-    // Adjusted bounds using actual character bounds union (not padded line bounds)
-    // ML Kit's lineBounds includes padding, which causes cursor misalignment
+    /**
+     * Pre-computed tight bounding boxes for hit testing.
+     * ML Kit's lineBounds includes extra padding which causes cursor misalignment,
+     * so we compute tight bounds from actual character bounding boxes instead.
+     * Lazy to avoid computation until first touch event.
+     */
     private val adjustedResults: List<Pair<OcrResult, RectF>> by lazy {
         ocrResults.map { result ->
             val actualBounds = if (result.charBounds.isNotEmpty()) {
@@ -201,13 +217,11 @@ class OverlayTextView(
         val offsetX = -overlayLocation[0].toFloat()
         val offsetY = -overlayLocation[1].toFloat()
 
-        // Apply highlight alpha for fade-in animation
-        val animatedHighlightPaint = Paint(highlightPaint).apply {
-            alpha = (Color.alpha(color) * highlightAlpha).toInt()
-        }
-        val animatedBorderPaint = Paint(textBorderPaint).apply {
-            alpha = (Color.alpha(color) * highlightAlpha).toInt()
-        }
+        // Apply highlight alpha for fade-in animation (update reusable paints instead of allocating)
+        animatedHighlightPaint.set(highlightPaint)
+        animatedHighlightPaint.alpha = (Color.alpha(highlightPaint.color) * highlightAlpha).toInt()
+        animatedBorderPaint.set(textBorderPaint)
+        animatedBorderPaint.alpha = (Color.alpha(textBorderPaint.color) * highlightAlpha).toInt()
 
         // Draw highlight boxes around detected text (with scale transformation and offset)
         for (result in ocrResults) {
@@ -225,10 +239,8 @@ class OverlayTextView(
 
         // Draw selected character(s) highlight - highlight full matched word
         if (selectedResult != null && selectedCharIndex >= 0) {
-            val selectedPaint = Paint().apply {
-                color = Color.argb((140 * highlightAlpha).toInt(), 80, 200, 120)
-                style = Paint.Style.FILL
-            }
+            // Update reusable paint instead of allocating new one
+            selectedHighlightPaint.color = Color.argb((140 * highlightAlpha).toInt(), 80, 200, 120)
             // Highlight all characters in the match
             for (i in 0 until selectedMatchLength) {
                 val charIdx = selectedCharIndex + i
@@ -236,7 +248,7 @@ class OverlayTextView(
                 selectedBounds?.let {
                     val adjusted = it.toScreenCoords()
                     adjusted.offset(offsetX, offsetY)
-                    canvas.drawRect(adjusted, selectedPaint)
+                    canvas.drawRect(adjusted, selectedHighlightPaint)
                 }
             }
         }
@@ -535,26 +547,33 @@ class OverlayTextView(
     }
 
     /**
-     * Get char index at screen coordinates (accounting for scale factors)
+     * Find which character index a screen coordinate maps to.
+     * Converts screen coordinates back to bitmap space (reverse of toScreenCoords),
+     * then checks which character bounding box contains that point.
+     *
+     * Two-pass matching:
+     * 1. Exact match: point is inside character bounds
+     * 2. X-range fallback: for slight Y misalignment (common with vertical text)
+     *
+     * @return Character index, or -1 if cursor is not over any character
      */
     private fun getCharIndexAt(result: OcrResult, screenX: Float, screenY: Float): Int {
         // Convert screen coordinates to bitmap/OCR coordinate space (reverse the scale)
         val bitmapX = screenX / scaleX
         val bitmapY = screenY / scaleY
 
-        // Direct coordinate matching
+        // Pass 1: Direct coordinate matching
         for ((index, bounds) in result.charBounds.withIndex()) {
             if (bounds.contains(bitmapX.toInt(), bitmapY.toInt())) {
                 return index
             }
         }
-        // Fallback: find char whose X range contains cursor (for slight Y misalignment)
+        // Pass 2: X-range fallback for slight Y misalignment
         for ((index, bounds) in result.charBounds.withIndex()) {
             if (bitmapX >= bounds.left && bitmapX <= bounds.right) {
                 return index
             }
         }
-        // No match - cursor is not over any character
         return -1
     }
 
@@ -826,5 +845,18 @@ class OverlayTextView(
         loadingAnimator?.cancel()
         loadingAnimator = null
         loadingAngle = 0f
+    }
+
+    /**
+     * Clean up animators when view is detached to prevent memory leaks.
+     */
+    override fun onDetachedFromWindow() {
+        super.onDetachedFromWindow()
+        popupAnimator?.cancel()
+        popupAnimator = null
+        highlightAnimator?.cancel()
+        highlightAnimator = null
+        loadingAnimator?.cancel()
+        loadingAnimator = null
     }
 }
