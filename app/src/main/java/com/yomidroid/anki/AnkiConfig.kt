@@ -1,4 +1,4 @@
-package com.vndict.anki
+package com.yomidroid.anki
 
 import android.content.Context
 import android.content.SharedPreferences
@@ -6,9 +6,9 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 
 /**
- * Fields that VNDict can export to Anki cards.
+ * Fields that Yomidroid can export to Anki cards.
  */
-enum class VNDictField(val displayName: String) {
+enum class YomidroidField(val displayName: String) {
     EXPRESSION("Expression"),
     READING("Reading"),
     DEFINITION("Definition"),
@@ -26,8 +26,8 @@ data class AnkiConfig(
     val deckName: String = "",
     val modelId: Long = -1L,
     val modelName: String = "",
-    val fieldMappings: Map<VNDictField, String> = emptyMap(),
-    val duplicateCheckField: VNDictField = VNDictField.EXPRESSION  // Which field to use for duplicate checking
+    val fieldMappings: Map<YomidroidField, String> = emptyMap(),
+    val duplicateCheckField: YomidroidField = YomidroidField.EXPRESSION  // Which field to use for duplicate checking
 ) {
     fun isConfigured(): Boolean {
         return deckId > 0 && modelId > 0 && fieldMappings.isNotEmpty()
@@ -56,11 +56,11 @@ class AnkiConfigManager(context: Context) {
 
     fun getConfig(): AnkiConfig {
         val mappingsJson = prefs.getString(KEY_FIELD_MAPPINGS, null)
-        val mappings: Map<VNDictField, String> = if (mappingsJson != null) {
+        val mappings: Map<YomidroidField, String> = if (mappingsJson != null) {
             try {
                 val type = object : TypeToken<Map<String, String>>() {}.type
                 val rawMap: Map<String, String> = gson.fromJson(mappingsJson, type)
-                rawMap.mapKeys { VNDictField.valueOf(it.key) }
+                rawMap.mapKeys { YomidroidField.valueOf(it.key) }
             } catch (e: Exception) {
                 emptyMap()
             }
@@ -70,9 +70,9 @@ class AnkiConfigManager(context: Context) {
 
         val duplicateCheckField = try {
             val fieldName = prefs.getString(KEY_DUPLICATE_CHECK_FIELD, null)
-            if (fieldName != null) VNDictField.valueOf(fieldName) else VNDictField.EXPRESSION
+            if (fieldName != null) YomidroidField.valueOf(fieldName) else YomidroidField.EXPRESSION
         } catch (e: Exception) {
-            VNDictField.EXPRESSION
+            YomidroidField.EXPRESSION
         }
 
         return AnkiConfig(
@@ -116,15 +116,15 @@ data class AnkiExportData(
     val partsOfSpeech: String,
     val deinflectionPath: String
 ) {
-    fun getFieldValue(field: VNDictField): String {
+    fun getFieldValue(field: YomidroidField): String {
         return when (field) {
-            VNDictField.EXPRESSION -> expression
-            VNDictField.READING -> reading
-            VNDictField.DEFINITION -> definition
-            VNDictField.SENTENCE -> sentence
-            VNDictField.SCREENSHOT -> screenshotHtml ?: screenshotPath?.let { "<img src=\"$it\">" } ?: ""
-            VNDictField.PARTS_OF_SPEECH -> partsOfSpeech
-            VNDictField.DEINFLECTION -> deinflectionPath
+            YomidroidField.EXPRESSION -> expression
+            YomidroidField.READING -> reading
+            YomidroidField.DEFINITION -> definition
+            YomidroidField.SENTENCE -> sentence
+            YomidroidField.SCREENSHOT -> screenshotHtml ?: screenshotPath?.let { "<img src=\"$it\">" } ?: ""
+            YomidroidField.PARTS_OF_SPEECH -> partsOfSpeech
+            YomidroidField.DEINFLECTION -> deinflectionPath
         }
     }
 }

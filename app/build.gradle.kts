@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "com.vndict"
+    namespace = "com.yomidroid"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.vndict"
+        applicationId = "com.yomidroid"
         minSdk = 26
         targetSdk = 34
         versionCode = 1

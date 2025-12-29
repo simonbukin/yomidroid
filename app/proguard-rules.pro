@@ -3,7 +3,7 @@
 -keep class com.google.mlkit.** { *; }
 
 # Keep Room entities
--keep class com.vndict.data.** { *; }
+-keep class com.yomidroid.data.** { *; }
 
 # Keep Gson serialization
 -keepattributes Signature

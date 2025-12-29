@@ -1,14 +1,14 @@
-package com.vndict
+package com.yomidroid
 
 import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.os.Build
 
-class VNDictApp : Application() {
+class YomidroidApp : Application() {
 
     companion object {
-        const val NOTIFICATION_CHANNEL_ID = "vndict_overlay_channel"
+        const val NOTIFICATION_CHANNEL_ID = "yomidroid_overlay_channel"
     }
 
     override fun onCreate() {

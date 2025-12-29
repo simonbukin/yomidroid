@@ -1,4 +1,4 @@
-package com.vndict.ui
+package com.yomidroid.ui
 
 import android.widget.Toast
 import androidx.compose.foundation.background
@@ -22,9 +22,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import com.vndict.config.ColorConfig
-import com.vndict.config.ColorConfigManager
-import com.vndict.service.VNDictAccessibilityService
+import com.yomidroid.config.ColorConfig
+import com.yomidroid.config.ColorConfigManager
+import com.yomidroid.service.YomidroidAccessibilityService
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -55,7 +55,7 @@ fun ColorSettingsScreen(
             cursorDotColor = cursorDotColor
         )
         configManager.saveConfig(newConfig)
-        VNDictAccessibilityService.instance?.loadColors()
+        YomidroidAccessibilityService.instance?.loadColors()
     }
 
     Scaffold(
@@ -76,7 +76,7 @@ fun ColorSettingsScreen(
                         highlightColor = defaults.highlightColor
                         fabColor = defaults.fabColor
                         cursorDotColor = defaults.cursorDotColor
-                        VNDictAccessibilityService.instance?.loadColors()
+                        YomidroidAccessibilityService.instance?.loadColors()
                         Toast.makeText(context, "Reset to defaults", Toast.LENGTH_SHORT).show()
                     }) {
                         Icon(Icons.Default.Refresh, contentDescription = "Reset")

@@ -1,4 +1,4 @@
-package com.vndict.service
+package com.yomidroid.service
 
 import android.content.Context
 import android.graphics.Canvas
@@ -75,7 +75,7 @@ class CursorFabView(context: Context) : View(context) {
         val cursorX = location[0] + width / 2f
         // Debug log occasionally
         if (System.currentTimeMillis() % 2000 < 30) {
-            android.util.Log.d("VNDict", "FAB: location[0]=${location[0]}, width=$width, cursorX=$cursorX")
+            android.util.Log.d("Yomidroid", "FAB: location[0]=${location[0]}, width=$width, cursorX=$cursorX")
         }
         return cursorX
     }

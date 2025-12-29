@@ -1,4 +1,4 @@
-package com.vndict.service
+package com.yomidroid.service
 
 import android.animation.ValueAnimator
 import android.content.Context
@@ -8,9 +8,9 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.animation.DecelerateInterpolator
 import androidx.core.content.ContextCompat
-import com.vndict.R
-import com.vndict.dictionary.DictionaryEntry
-import com.vndict.ocr.OcrResult
+import com.yomidroid.R
+import com.yomidroid.dictionary.DictionaryEntry
+import com.yomidroid.ocr.OcrResult
 
 /**
  * State of the Anki export button.
@@ -32,7 +32,8 @@ class OverlayTextView(
     private val onTextTapped: (String, Int) -> Unit,
     private val onDismissRequested: () -> Unit = {},
     private val onCursorLookup: ((String, Int, Float, Float) -> Unit)? = null,
-    private val onAnkiExport: ((DictionaryEntry, String) -> Unit)? = null  // Export to Anki callback
+    private val onAnkiExport: ((DictionaryEntry, String) -> Unit)? = null,  // Export to Anki callback
+    private val onSaveToHistory: ((DictionaryEntry, String) -> Unit)? = null  // Save to history callback
 ) : View(context) {
 
     private val density = context.resources.displayMetrics.density
@@ -110,9 +111,9 @@ class OverlayTextView(
         typeface = Typeface.create(Typeface.DEFAULT, Typeface.ITALIC)
     }
 
-    // Anki export button styling
+    // Anki export button styling - white background for blue star icon
     private val ankiButtonPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(200, 60, 140, 255) // Blue button
+        color = Color.argb(230, 255, 255, 255) // White button background
         style = Paint.Style.FILL
     }
 
@@ -146,6 +147,11 @@ class OverlayTextView(
     private var popupX: Float = 0f
     private var popupY: Float = 0f
     private var showingNoResults: Boolean = false
+
+    // Track popup open time for history feature
+    private var popupOpenTime: Long = 0L
+    private var lastShownEntry: DictionaryEntry? = null
+    private var lastShownSentence: String = ""
 
     // Adjusted bounds using actual character bounds union (not padded line bounds)
     // ML Kit's lineBounds includes padding, which causes cursor misalignment
@@ -586,10 +592,19 @@ class OverlayTextView(
     }
 
     fun showDefinition(entry: DictionaryEntry, charIndex: Int) {
+        // Save previous entry to history if it was open for 1+ second
+        maybeSaveToHistory()
+
         showingNoResults = false
         currentDefinition = entry
         selectedMatchLength = entry.matchedText.length
         resetAnkiButtonState()
+
+        // Track popup open time and entry for history
+        popupOpenTime = System.currentTimeMillis()
+        lastShownEntry = entry
+        lastShownSentence = selectedResult?.text ?: ""
+
         animatePopupIn()
     }
 
@@ -598,10 +613,18 @@ class OverlayTextView(
      * Positions popup above the selected text, not the cursor.
      */
     fun showDefinitionAtCursor(entry: DictionaryEntry, cursorX: Float, cursorY: Float) {
+        // Save previous entry to history if it was open for 1+ second
+        maybeSaveToHistory()
+
         showingNoResults = false
         currentDefinition = entry
         selectedMatchLength = entry.matchedText.length
         resetAnkiButtonState()
+
+        // Track popup open time and entry for history
+        popupOpenTime = System.currentTimeMillis()
+        lastShownEntry = entry
+        lastShownSentence = selectedResult?.text ?: ""
 
         // Position popup above the selected text, centered over all matched characters
         val firstBounds = selectedResult?.charBounds?.getOrNull(selectedCharIndex)
@@ -631,6 +654,9 @@ class OverlayTextView(
     }
 
     fun hideDefinition() {
+        // Save to history if popup was open for 1+ second
+        maybeSaveToHistory()
+
         animatePopupOut {
             currentDefinition = null
             showingNoResults = false
@@ -638,6 +664,32 @@ class OverlayTextView(
             selectedCharIndex = -1
             selectedMatchLength = 1
         }
+    }
+
+    /**
+     * Check if the popup was open for 1+ second and save to history if so.
+     */
+    private fun maybeSaveToHistory() {
+        val entry = lastShownEntry ?: return
+        if (popupOpenTime <= 0) return
+
+        val elapsed = System.currentTimeMillis() - popupOpenTime
+        if (elapsed >= 1000) {
+            // Popup was open for 1+ second, save to history
+            onSaveToHistory?.invoke(entry, lastShownSentence)
+        }
+
+        // Reset tracking
+        popupOpenTime = 0L
+        lastShownEntry = null
+        lastShownSentence = ""
+    }
+
+    /**
+     * Called when overlay is being dismissed to save any pending history.
+     */
+    fun onDismiss() {
+        maybeSaveToHistory()
     }
 
     /**

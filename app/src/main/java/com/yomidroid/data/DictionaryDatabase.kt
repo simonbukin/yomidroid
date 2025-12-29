@@ -1,4 +1,4 @@
-package com.vndict.data
+package com.yomidroid.data
 
 import android.content.Context
 import androidx.room.*
@@ -40,7 +40,10 @@ data class LookupHistoryEntity(
     val timestamp: Long = System.currentTimeMillis(),
 
     @ColumnInfo(name = "screenshot_path")
-    val screenshotPath: String? = null
+    val screenshotPath: String? = null,
+
+    @ColumnInfo(name = "sentence")
+    val sentence: String? = null
 )
 
 @Dao
@@ -50,6 +53,9 @@ interface LookupHistoryDao {
 
     @Query("SELECT * FROM lookup_history ORDER BY timestamp DESC LIMIT :limit")
     suspend fun getRecent(limit: Int): List<LookupHistoryEntity>
+
+    @Query("SELECT * FROM lookup_history WHERE timestamp > :since ORDER BY timestamp DESC")
+    suspend fun getSince(since: Long): List<LookupHistoryEntity>
 
     @Insert
     suspend fun insert(record: LookupHistoryEntity): Long
@@ -67,7 +73,7 @@ interface LookupHistoryDao {
  */
 @Database(
     entities = [LookupHistoryEntity::class],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -78,13 +84,21 @@ abstract class AppDatabase : RoomDatabase() {
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
+        private val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE lookup_history ADD COLUMN sentence TEXT")
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
-                    "vndict_history.db" // Different name to avoid conflicts
-                ).build()
+                    "yomidroid_history.db"
+                )
+                    .addMigrations(MIGRATION_1_2)
+                    .build()
                 INSTANCE = instance
                 instance
             }

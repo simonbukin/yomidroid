@@ -1,4 +1,4 @@
-package com.vndict.ui
+package com.yomidroid.ui
 
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -20,10 +20,10 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import com.vndict.anki.AnkiConfig
-import com.vndict.anki.AnkiConfigManager
-import com.vndict.anki.AnkiDroidExporter
-import com.vndict.anki.VNDictField
+import com.yomidroid.anki.AnkiConfig
+import com.yomidroid.anki.AnkiConfigManager
+import com.yomidroid.anki.AnkiDroidExporter
+import com.yomidroid.anki.YomidroidField
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -45,8 +45,8 @@ fun AnkiSettingsScreen(
     var selectedDeckName by remember { mutableStateOf("") }
     var selectedModelId by remember { mutableLongStateOf(-1L) }
     var selectedModelName by remember { mutableStateOf("") }
-    var fieldMappings by remember { mutableStateOf<Map<VNDictField, String>>(emptyMap()) }
-    var duplicateCheckField by remember { mutableStateOf(VNDictField.EXPRESSION) }
+    var fieldMappings by remember { mutableStateOf<Map<YomidroidField, String>>(emptyMap()) }
+    var duplicateCheckField by remember { mutableStateOf(YomidroidField.EXPRESSION) }
 
     var isLoading by remember { mutableStateOf(true) }
     var deckDropdownExpanded by remember { mutableStateOf(false) }
@@ -217,34 +217,71 @@ fun AnkiSettingsScreen(
                 )
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
-                    text = "Permission Required",
+                    text = "Enable AnkiDroid API",
                     style = MaterialTheme.typography.headlineSmall
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "VNDict needs permission to access AnkiDroid to read your decks and add cards.",
+                    text = "Yomidroid needs API access in AnkiDroid to read your decks and add cards.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(modifier = Modifier.height(24.dp))
+
+                // Step-by-step instructions
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = "Setup Instructions:",
+                            style = MaterialTheme.typography.titleSmall
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "1. Open AnkiDroid\n" +
+                                   "2. Tap ⋮ menu → Settings\n" +
+                                   "3. Tap Advanced\n" +
+                                   "4. Tap AnkiDroid API\n" +
+                                   "5. Find \"Yomidroid\" and enable it\n" +
+                                   "6. Return here and tap Refresh",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+
                 Button(
                     onClick = {
-                        permissionLauncher.launch("com.ichi2.anki.permission.READ_WRITE_DATABASE")
+                        // Try to open AnkiDroid directly
+                        try {
+                            val launchIntent = context.packageManager.getLaunchIntentForPackage("com.ichi2.anki")
+                            if (launchIntent != null) {
+                                context.startActivity(launchIntent)
+                            }
+                        } catch (e: Exception) {
+                            // Fallback to permission request
+                            permissionLauncher.launch("com.ichi2.anki.permission.READ_WRITE_DATABASE")
+                        }
                     }
                 ) {
-                    Text("Grant Permission")
+                    Text("Open AnkiDroid")
                 }
                 Spacer(modifier = Modifier.height(12.dp))
                 OutlinedButton(
                     onClick = {
-                        context.startActivity(exporter.getAnkiDroidSettingsIntent())
+                        permissionLauncher.launch("com.ichi2.anki.permission.READ_WRITE_DATABASE")
                     }
                 ) {
-                    Text("Open AnkiDroid Settings")
+                    Text("Request Permission")
                 }
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
-                    text = "If the permission dialog doesn't appear, open AnkiDroid, go to Settings → Advanced → AnkiDroid API, and enable access for VNDict.",
+                    text = "After enabling API access in AnkiDroid, return here and tap the refresh button in the top right.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -371,13 +408,13 @@ fun AnkiSettingsScreen(
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Map VNDict data to your note type fields",
+                        text = "Map Yomidroid data to your note type fields",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    VNDictField.entries.forEach { vnField ->
+                    YomidroidField.entries.forEach { vnField ->
                         FieldMappingRow(
                             vnFieldName = vnField.displayName,
                             ankiFields = modelFields,
@@ -456,7 +493,7 @@ fun AnkiSettingsScreen(
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "When you tap the Anki button in a definition popup, VNDict will create a card with the mapped fields. Screenshots are automatically saved to your Anki media folder. All cards are tagged with \"VNDict\" for easy filtering.",
+                            text = "When you tap the Anki button in a definition popup, Yomidroid will create a card with the mapped fields. Screenshots are automatically saved to your Anki media folder. All cards are tagged with \"Yomidroid\" for easy filtering.",
                             style = MaterialTheme.typography.bodySmall
                         )
                     }

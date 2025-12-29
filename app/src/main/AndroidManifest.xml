@@ -13,17 +13,17 @@
     </queries>
 
     <application
-        android:name=".VNDictApp"
+        android:name=".YomidroidApp"
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.VNDict">
+        android:theme="@style/Theme.Yomidroid">
 
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:theme="@style/Theme.VNDict">
+            android:theme="@style/Theme.Yomidroid">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -43,7 +43,7 @@
 
         <!-- Accessibility Service for screen capture -->
         <service
-            android:name=".service.VNDictAccessibilityService"
+            android:name=".service.YomidroidAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
             android:exported="false">
             <intent-filter>

@@ -1,4 +1,4 @@
-package com.vndict.anki
+package com.yomidroid.anki
 
 import android.app.Activity
 import android.content.Context
@@ -12,7 +12,7 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.ichi2.anki.api.AddContentApi
-import com.vndict.dictionary.DictionaryEntry
+import com.yomidroid.dictionary.DictionaryEntry
 import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
@@ -26,6 +26,7 @@ sealed class ExportResult {
     data class Error(val message: String) : ExportResult()
     object AnkiNotInstalled : ExportResult()
     object PermissionDenied : ExportResult()
+    object ApiNotEnabled : ExportResult()  // AnkiDroid API not enabled in AnkiDroid settings
     object NotConfigured : ExportResult()
 }
 
@@ -90,7 +91,7 @@ class AnkiDroidExporter(private val context: Context) {
 
     /**
      * Check if we have permission to access AnkiDroid API.
-     * This checks both the runtime permission and the API availability.
+     * This checks the runtime permission, API availability, and actually tests the connection.
      */
     fun hasPermission(): Boolean {
         // First check if we have the runtime permission
@@ -104,7 +105,32 @@ class AnkiDroidExporter(private val context: Context) {
 
         Log.d(TAG, "Permission check - runtime: $hasRuntimePermission, api: $apiAvailable")
 
-        return hasRuntimePermission || apiAvailable
+        // If basic checks pass, try an actual API call to verify
+        if (hasRuntimePermission || apiAvailable) {
+            return testApiAccess()
+        }
+
+        return false
+    }
+
+    /**
+     * Actually test if we can access the AnkiDroid API.
+     * This catches the case where Android permission is granted but AnkiDroid
+     * hasn't enabled API access for this app in its settings.
+     */
+    private fun testApiAccess(): Boolean {
+        return try {
+            val api = AddContentApi(context)
+            // Try to get deck list - this will throw SecurityException if not permitted
+            api.deckList
+            true
+        } catch (e: SecurityException) {
+            Log.w(TAG, "API access test failed - AnkiDroid API not enabled for this app: ${e.message}")
+            false
+        } catch (e: Exception) {
+            Log.w(TAG, "API access test failed: ${e.message}")
+            false
+        }
     }
 
     /**
@@ -249,10 +275,10 @@ class AnkiDroidExporter(private val context: Context) {
                 // findDuplicateNotes only works on the first field, so only check if mapped there
                 if (fieldIndex == 0) {
                     val checkValue = when (duplicateCheckField) {
-                        VNDictField.EXPRESSION -> entry.expression
-                        VNDictField.READING -> entry.reading
-                        VNDictField.DEFINITION -> entry.glossary.firstOrNull() ?: ""
-                        VNDictField.SENTENCE -> sentence
+                        YomidroidField.EXPRESSION -> entry.expression
+                        YomidroidField.READING -> entry.reading
+                        YomidroidField.DEFINITION -> entry.glossary.firstOrNull() ?: ""
+                        YomidroidField.SENTENCE -> sentence
                         else -> entry.expression
                     }
                     val duplicates = api.findDuplicateNotes(config.modelId, checkValue)
@@ -268,7 +294,7 @@ class AnkiDroidExporter(private val context: Context) {
             var screenshotHtml: String? = null
             if (screenshot != null) {
                 try {
-                    val stableFilename = "vndict_${entry.expression.hashCode()}_${System.currentTimeMillis()}.jpg"
+                    val stableFilename = "yomidroid_${entry.expression.hashCode()}_${System.currentTimeMillis()}.jpg"
                     val savedFilename = saveScreenshotWithName(screenshot, stableFilename)
 
                     if (savedFilename != null) {
@@ -315,8 +341,8 @@ class AnkiDroidExporter(private val context: Context) {
                 }
             }
 
-            // Add the note with VNDict tag
-            val tags = setOf("VNDict")
+            // Add the note with Yomidroid tag
+            val tags = setOf("Yomidroid")
             val noteId = api.addNote(config.modelId, config.deckId, fieldValues, tags)
 
             if (noteId != null && noteId > 0) {
@@ -329,8 +355,8 @@ class AnkiDroidExporter(private val context: Context) {
                 ExportResult.AlreadyExists
             }
         } catch (e: SecurityException) {
-            Log.e(TAG, "Permission denied: ${e.message}")
-            ExportResult.PermissionDenied
+            Log.e(TAG, "API not enabled in AnkiDroid: ${e.message}")
+            ExportResult.ApiNotEnabled
         } catch (e: Exception) {
             Log.e(TAG, "Export failed: ${e.message}", e)
             ExportResult.Error(e.message ?: "Unknown error")
@@ -341,7 +367,7 @@ class AnkiDroidExporter(private val context: Context) {
      * Save screenshot to cache directory and return filename.
      */
     private fun saveScreenshot(bitmap: Bitmap): String? {
-        return saveScreenshotWithName(bitmap, "vndict_${UUID.randomUUID()}.jpg")
+        return saveScreenshotWithName(bitmap, "yomidroid_${UUID.randomUUID()}.jpg")
     }
 
     /**
@@ -369,7 +395,7 @@ class AnkiDroidExporter(private val context: Context) {
             val cacheDir = context.cacheDir
             val cutoffTime = System.currentTimeMillis() - 24 * 60 * 60 * 1000 // 24 hours ago
             cacheDir.listFiles()?.filter {
-                it.name.startsWith("vndict_") && it.lastModified() < cutoffTime
+                it.name.startsWith("yomidroid_") && it.lastModified() < cutoffTime
             }?.forEach {
                 it.delete()
             }

@@ -4,15 +4,54 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <group android:scaleX="0.4"
-        android:scaleY="0.4"
-        android:translateX="32.4"
-        android:translateY="32.4">
-        <path
-            android:fillColor="#FFFFFF"
-            android:pathData="M54,27C40.2,27 27,40.2 27,54C27,67.8 40.2,81 54,81C67.8,81 81,67.8 81,54C81,40.2 67.8,27 54,27ZM54,72C45.2,72 36,62.8 36,54C36,45.2 45.2,36 54,36C62.8,36 72,45.2 72,54C72,62.8 62.8,72 54,72Z"/>
-        <path
-            android:fillColor="#FFFFFF"
-            android:pathData="M54,45C49,45 45,49 45,54C45,59 49,63 54,63C59,63 63,59 63,54C63,49 59,45 54,45Z"/>
-    </group>
+
+    <!-- Background circle (optional subtle outline) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,24C70.6,24 84,37.4 84,54C84,70.6 70.6,84 54,84C37.4,84 24,70.6 24,54C24,37.4 37.4,24 54,24Z"
+        android:fillAlpha="0.1"/>
+
+    <!-- Open book shape - left page -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,38L54,72C45,72 36,67 32,62L32,42C36,37 45,34 54,38Z"/>
+
+    <!-- Open book shape - right page -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,38L54,72C63,72 72,67 76,62L76,42C72,37 63,34 54,38Z"/>
+
+    <!-- Book spine/crease -->
+    <path
+        android:fillColor="#2196F3"
+        android:pathData="M52,38L56,38L56,72L52,72Z"
+        android:fillAlpha="0.3"/>
+
+    <!-- Japanese text lines on left page -->
+    <path
+        android:fillColor="#2196F3"
+        android:pathData="M38,48L48,48"
+        android:strokeWidth="2"
+        android:strokeColor="#2196F3"/>
+    <path
+        android:fillColor="#2196F3"
+        android:pathData="M38,54L46,54"
+        android:strokeWidth="2"
+        android:strokeColor="#2196F3"/>
+    <path
+        android:fillColor="#2196F3"
+        android:pathData="M38,60L44,60"
+        android:strokeWidth="2"
+        android:strokeColor="#2196F3"/>
+
+    <!-- Sparkle star (top right) -->
+    <path
+        android:fillColor="#FFD700"
+        android:pathData="M72,32L74,38L80,40L74,42L72,48L70,42L64,40L70,38Z"/>
+
+    <!-- Small sparkle accent -->
+    <path
+        android:fillColor="#FFD700"
+        android:pathData="M78,28L79,31L82,32L79,33L78,36L77,33L74,32L77,31Z"
+        android:fillAlpha="0.7"/>
 </vector>

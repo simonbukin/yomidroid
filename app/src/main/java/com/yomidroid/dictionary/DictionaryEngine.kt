@@ -1,10 +1,10 @@
-package com.vndict.dictionary
+package com.yomidroid.dictionary
 
 import android.content.Context
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
-import com.vndict.data.DictionaryDb
-import com.vndict.data.TermData
+import com.yomidroid.data.DictionaryDb
+import com.yomidroid.data.TermData
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 

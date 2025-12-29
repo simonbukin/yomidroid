@@ -1,4 +1,4 @@
-package com.vndict.dictionary
+package com.yomidroid.dictionary
 
 /**
  * Language transformer for Japanese deinflection.

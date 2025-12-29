@@ -1,4 +1,4 @@
-package com.vndict.config
+package com.yomidroid.config
 
 import android.content.Context
 import android.content.SharedPreferences

@@ -1,4 +1,4 @@
-package com.vndict.dictionary
+package com.yomidroid.dictionary
 
 data class DictionaryEntry(
     val id: Long,

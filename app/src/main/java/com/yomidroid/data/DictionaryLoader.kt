@@ -1,4 +1,4 @@
-package com.vndict.data
+package com.yomidroid.data
 
 import android.content.Context
 import kotlinx.coroutines.Dispatchers

@@ -15,5 +15,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "VNDict"
+rootProject.name = "Yomidroid"
 include(":app")

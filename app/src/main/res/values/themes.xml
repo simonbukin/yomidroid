@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.VNDict" parent="android:Theme.Material.Light.NoActionBar">
+    <style name="Theme.Yomidroid" parent="android:Theme.Material.Light.NoActionBar">
         <!-- Dark status and navigation bars to match dark theme -->
         <item name="android:statusBarColor">#121215</item>
         <item name="android:navigationBarColor">#121215</item>

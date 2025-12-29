@@ -4,8 +4,18 @@
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
-    <!-- Simplified Anki star icon - white for visibility on blue button -->
+    <!-- AnkiDroid-style star: blue fill with white border -->
+    <!-- Shadow/3D effect base -->
+    <path
+        android:fillColor="#B0BEC5"
+        android:pathData="M12,3.5l2.5,5.5 6,0.8 -4.3,4.2 1,5.8 -5.2,-2.7 -5.2,2.7 1,-5.8 -4.3,-4.2 6,-0.8z"
+        android:translateY="1"/>
+    <!-- White border -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M12,2l3,6 6.5,1 -4.7,4.6 1.1,6.4 -5.9,-3 -5.9,3 1.1,-6.4L2.5,9l6.5,-1z"/>
+        android:pathData="M12,2.5l2.8,5.8 6.4,0.9 -4.6,4.5 1.1,6.3 -5.7,-3 -5.7,3 1.1,-6.3 -4.6,-4.5 6.4,-0.9z"/>
+    <!-- Blue star fill -->
+    <path
+        android:fillColor="#2196F3"
+        android:pathData="M12,4l2.2,4.8 5.3,0.7 -3.8,3.7 0.9,5.3 -4.6,-2.4 -4.6,2.4 0.9,-5.3 -3.8,-3.7 5.3,-0.7z"/>
 </vector>

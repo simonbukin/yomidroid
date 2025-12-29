@@ -1,4 +1,4 @@
-package com.vndict.data
+package com.yomidroid.data
 
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
@@ -14,7 +14,7 @@ class DictionaryDb private constructor(context: Context) {
 
     companion object {
         private const val ASSET_DB_NAME = "dictionary.db"
-        private const val DB_NAME = "dictionary.db" // Stored separately from Room's vndict.db
+        private const val DB_NAME = "dictionary.db" // Stored separately from Room's yomidroid_history.db
         private const val DB_VERSION = 1
 
         @Volatile

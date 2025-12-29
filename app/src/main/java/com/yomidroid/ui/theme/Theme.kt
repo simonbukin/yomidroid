@@ -1,4 +1,4 @@
-package com.vndict.ui.theme
+package com.yomidroid.ui.theme
 
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
@@ -6,7 +6,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
 /**
- * VNDict dark theme colors.
+ * Yomidroid dark theme colors.
  * Background matches the overlay popup for visual consistency.
  */
 private val DarkColorScheme = darkColorScheme(
@@ -55,10 +55,10 @@ fun createColorScheme(accentColor: Color) = darkColorScheme(
 )
 
 /**
- * VNDict app theme with dark mode by default.
+ * Yomidroid app theme with dark mode by default.
  */
 @Composable
-fun VNDictTheme(
+fun YomidroidTheme(
     accentColor: Color = Color(0xFF2196F3),
     content: @Composable () -> Unit
 ) {

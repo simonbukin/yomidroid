@@ -5,5 +5,5 @@
     android:canRetrieveWindowContent="true"
     android:canTakeScreenshot="true"
     android:notificationTimeout="100"
-    android:settingsActivity="com.vndict.MainActivity"
+    android:settingsActivity="com.yomidroid.MainActivity"
     android:description="@string/accessibility_service_description" />

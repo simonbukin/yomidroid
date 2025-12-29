@@ -1,4 +1,4 @@
-package com.vndict.ocr
+package com.yomidroid.ocr
 
 import android.graphics.Rect
 

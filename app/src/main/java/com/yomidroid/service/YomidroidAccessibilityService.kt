@@ -1,4 +1,4 @@
-package com.vndict.service
+package com.yomidroid.service
 
 import android.accessibilityservice.AccessibilityService
 import android.animation.ValueAnimator
@@ -26,26 +26,26 @@ import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.Text
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.japanese.JapaneseTextRecognizerOptions
-import com.vndict.anki.AnkiDroidExporter
-import com.vndict.anki.ExportResult
-import com.vndict.config.ColorConfig
-import com.vndict.config.ColorConfigManager
-import com.vndict.dictionary.DictionaryEngine
-import com.vndict.ocr.OcrResult
+import com.yomidroid.anki.AnkiDroidExporter
+import com.yomidroid.anki.ExportResult
+import com.yomidroid.config.ColorConfig
+import com.yomidroid.config.ColorConfigManager
+import com.yomidroid.dictionary.DictionaryEngine
+import com.yomidroid.ocr.OcrResult
 
-class VNDictAccessibilityService : AccessibilityService() {
+class YomidroidAccessibilityService : AccessibilityService() {
 
     // Word snapping cache entry - stores lookup results for instant word highlighting
     private data class CachedLookup(
         val matchLength: Int,
-        val entry: com.vndict.dictionary.DictionaryEntry?
+        val entry: com.yomidroid.dictionary.DictionaryEntry?
     )
 
     companion object {
-        private const val TAG = "VNDict"
+        private const val TAG = "Yomidroid"
 
         @Volatile
-        var instance: VNDictAccessibilityService? = null
+        var instance: YomidroidAccessibilityService? = null
             private set
 
         val isRunning: Boolean
@@ -313,7 +313,7 @@ class VNDictAccessibilityService : AccessibilityService() {
 
                         handler.post {
                             Toast.makeText(
-                                this@VNDictAccessibilityService,
+                                this@YomidroidAccessibilityService,
                                 "Screenshot failed: $errorMsg",
                                 Toast.LENGTH_SHORT
                             ).show()
@@ -421,6 +421,9 @@ class VNDictAccessibilityService : AccessibilityService() {
             },
             onAnkiExport = { entry, sentence ->
                 exportToAnki(entry, sentence)
+            },
+            onSaveToHistory = { entry, sentence ->
+                saveToHistory(entry, sentence)
             }
         )
 
@@ -449,6 +452,8 @@ class VNDictAccessibilityService : AccessibilityService() {
 
     private fun removeOverlay() {
         overlayView?.let {
+            // Save to history if popup was open for 1+ second
+            it.onDismiss()
             try {
                 windowManager.removeView(it)
             } catch (e: Exception) {
@@ -463,7 +468,7 @@ class VNDictAccessibilityService : AccessibilityService() {
         fabTouchListener?.clearCache()
     }
 
-    private fun exportToAnki(entry: com.vndict.dictionary.DictionaryEntry, sentence: String) {
+    private fun exportToAnki(entry: com.yomidroid.dictionary.DictionaryEntry, sentence: String) {
         val exporter = ankiExporter ?: return
         val overlay = overlayView ?: return
 
@@ -497,16 +502,63 @@ class VNDictAccessibilityService : AccessibilityService() {
                     }
                     is ExportResult.NotConfigured -> {
                         overlay.resetAnkiButtonState()
-                        Toast.makeText(this, "Configure Anki in VNDict settings", Toast.LENGTH_LONG).show()
+                        Toast.makeText(this, "Configure Anki in Yomidroid settings", Toast.LENGTH_LONG).show()
                     }
                     is ExportResult.PermissionDenied -> {
                         overlay.resetAnkiButtonState()
                         Toast.makeText(this, "AnkiDroid permission denied", Toast.LENGTH_LONG).show()
                     }
+                    is ExportResult.ApiNotEnabled -> {
+                        overlay.resetAnkiButtonState()
+                        Toast.makeText(this, "Enable Yomidroid in AnkiDroid Settings → Advanced → AnkiDroid API", Toast.LENGTH_LONG).show()
+                    }
                     is ExportResult.Error -> {
                         overlay.resetAnkiButtonState()
                         Toast.makeText(this, "Export failed: ${result.message}", Toast.LENGTH_LONG).show()
                     }
+                }
+            }
+        }.start()
+    }
+
+    private fun saveToHistory(entry: com.yomidroid.dictionary.DictionaryEntry, sentence: String) {
+        // Capture screenshot reference before it might be nulled
+        val screenshot = currentScreenshot
+
+        Thread {
+            kotlinx.coroutines.runBlocking {
+                try {
+                    // Save screenshot to persistent storage
+                    var screenshotPath: String? = null
+                    if (screenshot != null) {
+                        val timestamp = System.currentTimeMillis()
+                        val screenshotDir = java.io.File(filesDir, "history_screenshots")
+                        if (!screenshotDir.exists()) {
+                            screenshotDir.mkdirs()
+                        }
+                        val screenshotFile = java.io.File(screenshotDir, "history_${timestamp}.jpg")
+                        try {
+                            java.io.FileOutputStream(screenshotFile).use { out ->
+                                screenshot.compress(Bitmap.CompressFormat.JPEG, 80, out)
+                            }
+                            screenshotPath = screenshotFile.absolutePath
+                            Log.d(TAG, "Saved screenshot: $screenshotPath")
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to save screenshot: ${e.message}")
+                        }
+                    }
+
+                    val historyRecord = com.yomidroid.data.LookupHistoryEntity(
+                        word = entry.expression,
+                        reading = entry.reading,
+                        definition = entry.glossary.take(3).joinToString("; "),
+                        screenshotPath = screenshotPath,
+                        sentence = sentence.ifEmpty { null }
+                    )
+                    com.yomidroid.data.AppDatabase.getInstance(this@YomidroidAccessibilityService).historyDao().insert(historyRecord)
+                    Log.d(TAG, "Saved to history: ${entry.expression}")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to save to history: ${e.message}")
                 }
             }
         }.start()
