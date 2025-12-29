@@ -350,7 +350,7 @@ class YomidroidAccessibilityService : AccessibilityService() {
         textRecognizer.process(inputImage)
             .addOnSuccessListener { visionText ->
                 Log.d(TAG, "OCR success, found ${visionText.textBlocks.size} blocks")
-                val results = extractOcrResults(visionText)
+                val results = mergeAdjacentLines(extractOcrResults(visionText))
                 if (results.isNotEmpty()) {
                     showTextOverlay(results, bitmap)
                 } else {
@@ -390,6 +390,55 @@ class YomidroidAccessibilityService : AccessibilityService() {
         }
 
         return results
+    }
+
+    /**
+     * Merges adjacent OCR lines that are on the same horizontal row.
+     * ML Kit can fragment continuous visual lines into multiple OcrResult objects,
+     * which breaks dictionary lookup across word boundaries.
+     */
+    private fun mergeAdjacentLines(results: List<OcrResult>): List<OcrResult> {
+        if (results.size <= 1) return results
+
+        // Sort by vertical position (top of bounding box)
+        val sorted = results.sortedBy { it.lineBounds.top }
+
+        val merged = mutableListOf<OcrResult>()
+        var current = sorted[0]
+
+        for (i in 1 until sorted.size) {
+            val next = sorted[i]
+
+            // Check if lines are on the same horizontal row
+            val yDiff = Math.abs(current.lineBounds.centerY() - next.lineBounds.centerY())
+            val tolerance = current.lineBounds.height() * 0.5f
+
+            if (yDiff <= tolerance) {
+                // Merge: determine order by X position
+                val (left, right) = if (current.lineBounds.left < next.lineBounds.left) {
+                    current to next
+                } else {
+                    next to current
+                }
+
+                current = OcrResult(
+                    text = left.text + right.text,
+                    lineBounds = Rect(
+                        minOf(left.lineBounds.left, right.lineBounds.left),
+                        minOf(left.lineBounds.top, right.lineBounds.top),
+                        maxOf(left.lineBounds.right, right.lineBounds.right),
+                        maxOf(left.lineBounds.bottom, right.lineBounds.bottom)
+                    ),
+                    charBounds = left.charBounds + right.charBounds
+                )
+            } else {
+                merged.add(current)
+                current = next
+            }
+        }
+        merged.add(current)
+
+        return merged
     }
 
     private fun showTextOverlay(results: List<OcrResult>, screenshot: Bitmap) {

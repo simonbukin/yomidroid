@@ -160,6 +160,14 @@ class OverlayTextView(
     private var popupY: Float = 0f
     private var showingNoResults: Boolean = false
 
+    // Popup scrolling state
+    private var popupScrollY: Float = 0f
+    private var popupContentHeight: Float = 0f
+    private var popupVisibleHeight: Float = 0f
+    private var popupBounds: RectF? = null
+    private var lastTouchY: Float = 0f
+    private var isDraggingPopup: Boolean = false
+
     // Track popup open time for history feature
     private var popupOpenTime: Long = 0L
     private var lastShownEntry: DictionaryEntry? = null
@@ -225,15 +233,10 @@ class OverlayTextView(
 
         // Draw highlight boxes around detected text (with scale transformation and offset)
         for (result in ocrResults) {
-            // Draw individual character highlights
-            for (charBounds in result.charBounds) {
-                val adjusted = charBounds.toScreenCoords()
-                adjusted.offset(offsetX, offsetY)
-                canvas.drawRect(adjusted, animatedHighlightPaint)
-            }
-            // Draw line border
+            // Draw unified line highlight (covers full merged line)
             val adjustedLine = result.lineBounds.toScreenCoords()
             adjustedLine.offset(offsetX, offsetY)
+            canvas.drawRect(adjustedLine, animatedHighlightPaint)
             canvas.drawRect(adjustedLine, animatedBorderPaint)
         }
 
@@ -294,6 +297,7 @@ class OverlayTextView(
         val paddingH = 20f * density
         val paddingV = 16f * density
         val maxWidth = width * 0.9f
+        val maxHeight = height * 0.6f  // Max 60% of screen height
         val cornerRadius = 12f * density
 
         // Anki button dimensions
@@ -312,11 +316,8 @@ class OverlayTextView(
             "→ ${entry.deinflectionPath}"
         } else null
 
-        // Limit glossary entries and truncate long ones
-        val maxGlossLength = 50
-        val glosses = entry.glossary.take(3).map { gloss ->
-            if (gloss.length > maxGlossLength) gloss.take(maxGlossLength) + "…" else gloss
-        }
+        // Show all glossary entries (no truncation for scrolling)
+        val glosses = entry.glossary
 
         // Calculate popup width based on content (add space for Anki button)
         var contentWidth = headwordPaint.measureText(headword)
@@ -324,18 +325,29 @@ class OverlayTextView(
             contentWidth += ankiButtonWidth + ankiButtonMargin
         }
         reading?.let { contentWidth = maxOf(contentWidth, readingPaint.measureText(it)) }
-        glosses.forEach { contentWidth = maxOf(contentWidth, glossPaint.measureText(it) + 24f * density) }
+        // For width, still limit gloss measurement to avoid overly wide popups
+        glosses.forEach {
+            val displayGloss = if (it.length > 60) it.take(60) + "…" else it
+            contentWidth = maxOf(contentWidth, glossPaint.measureText(displayGloss) + 24f * density)
+        }
         val popupWidth = minOf(contentWidth + paddingH * 2, maxWidth)
 
-        // Calculate popup height
-        var contentHeight = headwordPaint.textSize  // Headword
-        reading?.let { contentHeight += readingPaint.textSize + 4f * density }  // Reading
-        deinflection?.let { contentHeight += deinflectPaint.textSize + 8f * density }  // Deinflection
+        // Calculate full content height (for scrolling)
+        var fullContentHeight = headwordPaint.textSize  // Headword
+        reading?.let { fullContentHeight += readingPaint.textSize + 4f * density }  // Reading
+        deinflection?.let { fullContentHeight += deinflectPaint.textSize + 8f * density }  // Deinflection
         if (glosses.isNotEmpty()) {
-            contentHeight += 12f * density  // Gap before glosses
-            contentHeight += glosses.size * (glossPaint.textSize + 6f * density)
+            fullContentHeight += 12f * density  // Gap before glosses
+            fullContentHeight += glosses.size * (glossPaint.textSize + 6f * density)
         }
-        val popupHeight = contentHeight + paddingV * 2
+
+        // Calculate visible height (capped at maxHeight)
+        val fullPopupHeight = fullContentHeight + paddingV * 2
+        val popupHeight = minOf(fullPopupHeight, maxHeight)
+
+        // Track heights for scrolling
+        popupContentHeight = fullContentHeight
+        popupVisibleHeight = popupHeight - paddingV * 2
 
         // Position popup - prefer above cursor, fallback to below
         var finalX = popupX - popupWidth / 2
@@ -347,6 +359,9 @@ class OverlayTextView(
             finalY = popupY + 40f * density  // Below cursor if no room above
         }
         finalY = finalY.coerceIn(8f, height - popupHeight - 8f)
+
+        // Store popup bounds for touch detection
+        popupBounds = RectF(finalX, finalY, finalX + popupWidth, finalY + popupHeight)
 
         // Apply popup alpha for fade animation
         val alpha = popupAlpha
@@ -366,7 +381,7 @@ class OverlayTextView(
         canvas.drawRoundRect(rect, cornerRadius, cornerRadius, bgPaint)
         canvas.drawRoundRect(rect, cornerRadius, cornerRadius, borderPaint)
 
-        // Draw Anki export button (top-right corner)
+        // Draw Anki export button (top-right corner) - outside clip region
         if (showAnkiButton) {
             val buttonX = finalX + popupWidth - ankiButtonWidth - ankiButtonMargin
             val buttonY = finalY + ankiButtonMargin
@@ -443,14 +458,18 @@ class OverlayTextView(
             ankiButtonBounds = null
         }
 
-        // Draw content with alpha
+        // Draw content with alpha - use clipping for scrollable content
         val headPaint = Paint(headwordPaint).apply { this.alpha = (255 * alpha).toInt() }
         val readPaint = Paint(readingPaint).apply { this.alpha = (180 * alpha).toInt() }
         val deinPaint = Paint(deinflectPaint).apply { this.alpha = (150 * alpha).toInt() }
         val glossTextPaint = Paint(glossPaint).apply { this.alpha = (230 * alpha).toInt() }
         val glossNumPaint = Paint(glossNumberPaint).apply { this.alpha = (120 * alpha).toInt() }
 
-        var y = finalY + paddingV + headwordPaint.textSize * 0.85f
+        // Save canvas state and apply clipping for scrollable content
+        canvas.save()
+        canvas.clipRect(finalX, finalY + paddingV, finalX + popupWidth, finalY + popupHeight - paddingV)
+
+        var y = finalY + paddingV + headwordPaint.textSize * 0.85f - popupScrollY
 
         // Headword
         canvas.drawText(headword, finalX + paddingH, y, headPaint)
@@ -468,7 +487,7 @@ class OverlayTextView(
             canvas.drawText(it, finalX + paddingH, y, deinPaint)
         }
 
-        // Glossary
+        // Glossary - show all entries
         if (glosses.isNotEmpty()) {
             y += 14f * density
             glosses.forEachIndexed { index, gloss ->
@@ -476,21 +495,71 @@ class OverlayTextView(
                 // Draw number
                 val numText = "${index + 1}."
                 canvas.drawText(numText, finalX + paddingH, y, glossNumPaint)
-                // Draw gloss
+                // Draw gloss (full text, clipping handles overflow)
                 canvas.drawText(gloss, finalX + paddingH + 20f * density, y, glossTextPaint)
             }
+        }
+
+        // Restore canvas state
+        canvas.restore()
+
+        // Draw scroll indicator if content overflows
+        if (popupContentHeight > popupVisibleHeight) {
+            val scrollBarWidth = 3f * density
+            val scrollBarMargin = 4f * density
+            val scrollableRange = popupContentHeight - popupVisibleHeight
+            val scrollBarHeight = (popupVisibleHeight / popupContentHeight) * (popupHeight - paddingV * 2)
+            val scrollBarY = finalY + paddingV + (popupScrollY / scrollableRange) * (popupHeight - paddingV * 2 - scrollBarHeight)
+
+            val scrollBarPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.argb((80 * alpha).toInt(), 255, 255, 255)
+                style = Paint.Style.FILL
+            }
+            val scrollBarRect = RectF(
+                finalX + popupWidth - scrollBarWidth - scrollBarMargin,
+                scrollBarY,
+                finalX + popupWidth - scrollBarMargin,
+                scrollBarY + scrollBarHeight
+            )
+            canvas.drawRoundRect(scrollBarRect, scrollBarWidth / 2, scrollBarWidth / 2, scrollBarPaint)
         }
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        val x = event.x
+        val y = event.y
+
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
+                lastTouchY = y
+                // Check if touch is within popup bounds for potential scrolling
+                popupBounds?.let { bounds ->
+                    if (bounds.contains(x, y) && popupContentHeight > popupVisibleHeight) {
+                        isDraggingPopup = true
+                    }
+                }
                 return true
             }
 
-            MotionEvent.ACTION_UP -> {
-                val x = event.x
-                val y = event.y
+            MotionEvent.ACTION_MOVE -> {
+                if (isDraggingPopup && popupContentHeight > popupVisibleHeight) {
+                    val deltaY = lastTouchY - y
+                    val maxScroll = popupContentHeight - popupVisibleHeight
+                    popupScrollY = (popupScrollY + deltaY).coerceIn(0f, maxScroll)
+                    lastTouchY = y
+                    invalidate()
+                    return true
+                }
+            }
+
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                val wasDragging = isDraggingPopup
+                isDraggingPopup = false
+
+                // If we were dragging, don't process as a tap
+                if (wasDragging && kotlin.math.abs(y - lastTouchY) > 10f) {
+                    return true
+                }
 
                 // Check if tap is on Anki export button
                 ankiButtonBounds?.let { bounds ->
@@ -504,6 +573,13 @@ class OverlayTextView(
                     }
                 }
 
+                // Check if tap is within popup (but not on button) - ignore to allow scrolling
+                popupBounds?.let { bounds ->
+                    if (bounds.contains(x, y)) {
+                        return true
+                    }
+                }
+
                 // First check if tap is on any OCR text region
                 for ((result, bounds) in adjustedResults) {
                     if (bounds.contains(x, y)) {
@@ -512,6 +588,7 @@ class OverlayTextView(
                             // Clear any existing popup before new lookup
                             currentDefinition = null
                             showingNoResults = false
+                            popupScrollY = 0f  // Reset scroll for new popup
 
                             selectedResult = result
                             selectedCharIndex = charIndex
@@ -534,6 +611,8 @@ class OverlayTextView(
                     showingNoResults = false
                     selectedResult = null
                     selectedCharIndex = -1
+                    popupScrollY = 0f
+                    popupBounds = null  // Clear bounds so subsequent taps aren't blocked
                     invalidate()
                     return true
                 }

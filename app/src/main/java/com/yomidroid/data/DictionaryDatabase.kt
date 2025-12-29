@@ -57,6 +57,9 @@ interface LookupHistoryDao {
     @Query("SELECT * FROM lookup_history WHERE timestamp > :since ORDER BY timestamp DESC")
     suspend fun getSince(since: Long): List<LookupHistoryEntity>
 
+    @Query("SELECT * FROM lookup_history WHERE id = :id")
+    suspend fun getById(id: Long): LookupHistoryEntity?
+
     @Insert
     suspend fun insert(record: LookupHistoryEntity): Long
 

@@ -3,6 +3,7 @@ package com.yomidroid.ui.history
 import android.graphics.BitmapFactory
 import android.widget.Toast
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -47,7 +48,9 @@ enum class TimeFilter(val label: String, val durationMs: Long) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HistoryScreen() {
+fun HistoryScreen(
+    onNavigateToDetail: (Long) -> Unit = {}
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -237,6 +240,7 @@ fun HistoryScreen() {
                             ) { item ->
                                 HistoryItem(
                                     item = item,
+                                    onClick = { onNavigateToDetail(item.id) },
                                     onDelete = {
                                         scope.launch {
                                             withContext(Dispatchers.IO) {
@@ -259,6 +263,7 @@ fun HistoryScreen() {
 @Composable
 private fun HistoryItem(
     item: LookupHistoryEntity,
+    onClick: () -> Unit,
     onDelete: () -> Unit,
     onExportToAnki: (LookupHistoryEntity, (AnkiButtonState) -> Unit) -> Unit
 ) {
@@ -287,7 +292,9 @@ private fun HistoryItem(
     }
 
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
         )

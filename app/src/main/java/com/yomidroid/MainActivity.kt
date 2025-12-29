@@ -29,6 +29,7 @@ import com.yomidroid.data.DictionaryLoader
 import com.yomidroid.service.YomidroidAccessibilityService
 import com.yomidroid.ui.AnkiSettingsScreen
 import com.yomidroid.ui.ColorSettingsScreen
+import com.yomidroid.ui.history.HistoryDetailScreen
 import com.yomidroid.ui.history.HistoryScreen
 import com.yomidroid.ui.settings.SettingsScreen
 import com.yomidroid.ui.theme.YomidroidTheme
@@ -36,6 +37,7 @@ import com.yomidroid.ui.theme.YomidroidTheme
 sealed class Screen(val route: String) {
     object Home : Screen("home")
     object History : Screen("history")
+    data class HistoryDetail(val id: Long) : Screen("history_detail")
     object Settings : Screen("settings")
     object AnkiSettings : Screen("anki_settings")
     object ColorSettings : Screen("color_settings")
@@ -71,6 +73,13 @@ class MainActivity : ComponentActivity() {
                     }
                     Screen.ColorSettings -> {
                         ColorSettingsScreen(onBack = { currentScreen = Screen.Settings })
+                    }
+                    is Screen.HistoryDetail -> {
+                        val detailScreen = currentScreen as Screen.HistoryDetail
+                        HistoryDetailScreen(
+                            historyId = detailScreen.id,
+                            onBack = { currentScreen = Screen.History }
+                        )
                     }
                     else -> {
                         MainAppContent(
@@ -138,7 +147,9 @@ fun MainAppContent(
         Box(modifier = Modifier.padding(padding)) {
             when (currentScreen) {
                 Screen.Home -> HomeScreen(onOpenAccessibilitySettings = onOpenAccessibilitySettings)
-                Screen.History -> HistoryScreen()
+                Screen.History -> HistoryScreen(
+                    onNavigateToDetail = { id -> onNavigate(Screen.HistoryDetail(id)) }
+                )
                 Screen.Settings -> SettingsScreen(
                     onOpenAnkiSettings = { onNavigate(Screen.AnkiSettings) },
                     onOpenColorSettings = { onNavigate(Screen.ColorSettings) },
