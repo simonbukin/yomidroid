@@ -35,6 +35,7 @@ import com.yomidroid.config.ColorConfigManager
 import com.yomidroid.dictionary.DictionaryEngine
 import com.yomidroid.ocr.OcrResult
 import com.yomidroid.ocr.OcrResultRepository
+import com.yomidroid.ocr.UnifiedOcrContext
 
 class YomidroidAccessibilityService : AccessibilityService() {
 
@@ -83,6 +84,9 @@ class YomidroidAccessibilityService : AccessibilityService() {
 
     // Store current OCR results for cursor-based lookup
     private var currentOcrResults: List<OcrResult> = emptyList()
+
+    // Unified context for cross-line text search and highlighting
+    private var unifiedContext: UnifiedOcrContext? = null
 
     // Keep clean screenshot for Anki export
     private var currentScreenshot: Bitmap? = null
@@ -475,6 +479,9 @@ class YomidroidAccessibilityService : AccessibilityService() {
         // Store results for cursor-based lookup
         currentOcrResults = results
 
+        // Create unified context for cross-line search and highlighting
+        unifiedContext = UnifiedOcrContext(results)
+
         // Share OCR results with repository for Grammar Analyzer
         OcrResultRepository.updateOcrResults(results)
 
@@ -492,12 +499,13 @@ class YomidroidAccessibilityService : AccessibilityService() {
         overlayView = OverlayTextView(
             context = this,
             ocrResults = results,
+            unifiedContext = unifiedContext,
             screenshot = screenshot,
             scaleX = scaleX,
             scaleY = scaleY,
             highlightColor = colorConfig.highlightColor,
-            onTextTapped = { text, charIndex ->
-                onTextTapped(text, charIndex)
+            onTextTapped = { ocrResult, charIndex ->
+                onTextTapped(ocrResult, charIndex)
             },
             onDismissRequested = {
                 removeOverlay()
@@ -545,6 +553,7 @@ class YomidroidAccessibilityService : AccessibilityService() {
         }
         overlayView = null
         currentOcrResults = emptyList()
+        unifiedContext = null
         currentScreenshot = null
 
         // Clear lookup cache when overlay is dismissed
@@ -646,14 +655,28 @@ class YomidroidAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun onTextTapped(fullText: String, charIndex: Int) {
+    private fun onTextTapped(ocrResult: OcrResult, charIndex: Int) {
+        val context = unifiedContext ?: return
+
+        // Get the unified index for this tap position
+        val unifiedIndex = context.getUnifiedIndex(ocrResult, charIndex)
+        if (unifiedIndex < 0) return
+
         Thread {
-            val searchText = fullText.substring(charIndex)
+            // Search from this position in the unified text (all screen text)
+            val searchText = context.unifiedText.substring(unifiedIndex)
             val entries = dictionaryEngine?.findTerms(searchText) ?: emptyList()
 
             handler.post {
                 if (entries.isNotEmpty()) {
-                    overlayView?.showDefinition(entries.first(), charIndex)
+                    val entry = entries.first()
+                    // Show definition with unified match info for cross-line highlighting
+                    overlayView?.showDefinitionWithUnifiedMatch(
+                        entry = entry,
+                        unifiedStartIndex = unifiedIndex,
+                        matchLength = entry.matchedText.length,
+                        context = context
+                    )
                 } else {
                     overlayView?.showNoResults()
                 }
@@ -828,6 +851,7 @@ class YomidroidAccessibilityService : AccessibilityService() {
         private fun lookupAtCursor() {
             val fab = fabView ?: return
             val overlay = overlayView ?: return
+            val context = unifiedContext ?: return
 
             val cursorX = fab.getCursorScreenX()
             val cursorY = fab.getCursorScreenY()
@@ -847,21 +871,26 @@ class YomidroidAccessibilityService : AccessibilityService() {
 
             val (ocrResult, charIndex, _) = textInfo
 
-            // Skip if same position
-            if (ocrResult.text == lastLookedUpText && charIndex == lastLookedUpIndex) {
+            // Convert to unified index for consistent caching across all OcrResults
+            val unifiedIndex = context.getUnifiedIndex(ocrResult, charIndex)
+            if (unifiedIndex < 0) return
+
+            // Skip if same unified position
+            if (context.unifiedText == lastLookedUpText && unifiedIndex == lastLookedUpIndex) {
                 return
             }
 
-            lastLookedUpText = ocrResult.text
-            lastLookedUpIndex = charIndex
+            lastLookedUpText = context.unifiedText
+            lastLookedUpIndex = unifiedIndex
 
-            val cacheKey = getCacheKey(ocrResult.text, charIndex)
+            // Use unified index for cache key (unique across all OcrResults)
+            val cacheKey = "unified:$unifiedIndex"
 
             // Check cache first for instant word snapping
             val cached = lookupCache[cacheKey]
             if (cached != null) {
-                // Cache hit - immediately highlight full word
-                overlay.setHighlight(ocrResult, charIndex, cached.matchLength)
+                // Cache hit - immediately highlight full word (may span OcrResults)
+                overlay.setHighlightFromUnified(context, unifiedIndex, cached.matchLength)
                 if (cached.entry != null) {
                     overlay.showDefinitionAtCursor(cached.entry, cursorX, cursorY)
                 } else {
@@ -873,15 +902,14 @@ class YomidroidAccessibilityService : AccessibilityService() {
             // Cache miss - show single char highlight immediately as fallback
             overlay.setHighlight(ocrResult, charIndex, 1)
 
-            // Perform dictionary lookup on background thread
+            // Perform dictionary lookup on background thread using unified text
             Thread {
-                val searchText = ocrResult.text.substring(charIndex)
+                val searchText = context.unifiedText.substring(unifiedIndex)
                 val entries = dictionaryEngine?.findTerms(searchText) ?: emptyList()
                 val entry = entries.firstOrNull()
                 val matchLength = entry?.matchedText?.length ?: 1
 
                 // Cache the result for instant lookup on subsequent cursor moves
-                // Simple eviction: clear all when limit reached (good enough for ephemeral overlay)
                 synchronized(lookupCache) {
                     if (lookupCache.size > MAX_LOOKUP_CACHE_SIZE) {
                         lookupCache.clear()
@@ -891,8 +919,9 @@ class YomidroidAccessibilityService : AccessibilityService() {
 
                 handler.post {
                     // Verify cursor hasn't moved before updating
-                    if (ocrResult.text == lastLookedUpText && charIndex == lastLookedUpIndex) {
-                        overlay.setHighlight(ocrResult, charIndex, matchLength)
+                    if (context.unifiedText == lastLookedUpText && unifiedIndex == lastLookedUpIndex) {
+                        // Use unified highlighting for cross-line matches
+                        overlay.setHighlightFromUnified(context, unifiedIndex, matchLength)
                         if (entry != null) {
                             overlay.showDefinitionAtCursor(entry, cursorX, cursorY)
                         } else {

@@ -13,7 +13,9 @@ import android.view.animation.DecelerateInterpolator
 import androidx.core.content.ContextCompat
 import com.yomidroid.R
 import com.yomidroid.dictionary.DictionaryEntry
+import com.yomidroid.ocr.CharMapping
 import com.yomidroid.ocr.OcrResult
+import com.yomidroid.ocr.UnifiedOcrContext
 
 /**
  * State of the Anki export button.
@@ -28,11 +30,12 @@ enum class AnkiButtonState {
 class OverlayTextView(
     context: Context,
     private val ocrResults: List<OcrResult>,
+    private val unifiedContext: UnifiedOcrContext? = null,  // Unified context for cross-line search
     private val screenshot: Bitmap,
     private val scaleX: Float = 1f,  // Scale factor: screenWidth / bitmapWidth
     private val scaleY: Float = 1f,  // Scale factor: screenHeight / bitmapHeight
     private val highlightColor: Int = Color.argb(60, 255, 200, 0),  // Configurable highlight color
-    private val onTextTapped: (String, Int) -> Unit,
+    private val onTextTapped: (OcrResult, Int) -> Unit,  // Changed: now passes OcrResult instead of String
     private val onDismissRequested: () -> Unit = {},
     private val onCursorLookup: ((String, Int, Float, Float) -> Unit)? = null,
     private val onAnkiExport: ((DictionaryEntry, String) -> Unit)? = null,  // Export to Anki callback
@@ -189,6 +192,9 @@ class OverlayTextView(
     private var popupY: Float = 0f
     private var showingNoResults: Boolean = false
 
+    // Cross-line highlight support: stores all CharMappings when match spans multiple OcrResults
+    private var crossLineHighlight: List<CharMapping>? = null
+
     // Popup scrolling state
     private var popupScrollY: Float = 0f
     private var popupContentHeight: Float = 0f
@@ -270,10 +276,22 @@ class OverlayTextView(
         }
 
         // Draw selected character(s) highlight - highlight full matched word
-        if (selectedResult != null && selectedCharIndex >= 0) {
-            // Update reusable paint instead of allocating new one
+        // Supports cross-line matches via crossLineHighlight
+        val crossLine = crossLineHighlight
+        if (crossLine != null && crossLine.isNotEmpty()) {
+            // Cross-line match: highlight characters across multiple OcrResults
             selectedHighlightPaint.color = Color.argb((140 * highlightAlpha).toInt(), 80, 200, 120)
-            // Highlight all characters in the match
+            for (mapping in crossLine) {
+                val bounds = mapping.ocrResult.charBounds.getOrNull(mapping.charIndex)
+                bounds?.let {
+                    val adjusted = it.toScreenCoords()
+                    adjusted.offset(offsetX, offsetY)
+                    canvas.drawRect(adjusted, selectedHighlightPaint)
+                }
+            }
+        } else if (selectedResult != null && selectedCharIndex >= 0) {
+            // Single-line match: original highlighting logic
+            selectedHighlightPaint.color = Color.argb((140 * highlightAlpha).toInt(), 80, 200, 120)
             for (i in 0 until selectedMatchLength) {
                 val charIdx = selectedCharIndex + i
                 val selectedBounds = selectedResult!!.charBounds.getOrNull(charIdx)
@@ -725,7 +743,7 @@ class OverlayTextView(
                             popupY = y
 
                             invalidate()
-                            onTextTapped(result.text, charIndex)
+                            onTextTapped(result, charIndex)  // Pass OcrResult for unified context lookup
                             return true
                         }
                     }
@@ -921,10 +939,85 @@ class OverlayTextView(
      * Set highlight for a specific character range (used when match length is known).
      */
     fun setHighlight(result: OcrResult, charIndex: Int, matchLength: Int) {
+        crossLineHighlight = null  // Clear cross-line highlight when using single-line
         selectedResult = result
         selectedCharIndex = charIndex
         selectedMatchLength = matchLength
         invalidate()
+    }
+
+    /**
+     * Set highlight for a match that may span multiple OcrResults.
+     * Uses unified context to find all character positions to highlight.
+     *
+     * @param context The unified OCR context
+     * @param unifiedStartIndex Starting index in the unified text string
+     * @param matchLength Number of characters in the match
+     */
+    fun setHighlightFromUnified(
+        context: UnifiedOcrContext,
+        unifiedStartIndex: Int,
+        matchLength: Int
+    ) {
+        // Get all character mappings in the match range
+        val mappings = context.getCharMappingsInRange(unifiedStartIndex, matchLength)
+        if (mappings.isEmpty()) return
+
+        // Store cross-line highlight info
+        crossLineHighlight = mappings
+
+        // Set selectedResult to first character's OcrResult for popup positioning
+        val first = mappings.first()
+        selectedResult = first.ocrResult
+        selectedCharIndex = first.charIndex
+        // Count how many characters are in the first OcrResult for sentence extraction
+        selectedMatchLength = mappings.count { it.ocrResult == first.ocrResult }
+
+        invalidate()
+    }
+
+    /**
+     * Show definition with unified match info for cross-line highlighting.
+     * Positions popup and sets up highlighting across OcrResult boundaries.
+     *
+     * @param entry The dictionary entry to display
+     * @param unifiedStartIndex Starting index in the unified text string
+     * @param matchLength Number of characters in the match
+     * @param context The unified OCR context
+     */
+    fun showDefinitionWithUnifiedMatch(
+        entry: DictionaryEntry,
+        unifiedStartIndex: Int,
+        matchLength: Int,
+        context: UnifiedOcrContext
+    ) {
+        // Save previous entry to history if it was open for 1+ second
+        maybeSaveToHistory()
+
+        // Set up cross-line highlighting
+        setHighlightFromUnified(context, unifiedStartIndex, matchLength)
+
+        showingNoResults = false
+        currentDefinition = entry
+        resetAnkiButtonState()
+
+        // Track popup open time and entry for history
+        popupOpenTime = System.currentTimeMillis()
+        lastShownEntry = entry
+        lastShownSentence = selectedResult?.text ?: ""
+
+        // Position popup above the first character of the match
+        val firstMapping = context.getLocalPosition(unifiedStartIndex)
+        if (firstMapping != null) {
+            val firstBounds = firstMapping.ocrResult.charBounds.getOrNull(firstMapping.charIndex)
+            if (firstBounds != null) {
+                // Center horizontally over the match start
+                popupX = firstBounds.centerX() * scaleX
+                popupY = firstBounds.top * scaleY
+            }
+        }
+
+        animatePopupIn()
     }
 
     /**
@@ -934,6 +1027,7 @@ class OverlayTextView(
         selectedResult = null
         selectedCharIndex = -1
         selectedMatchLength = 1
+        crossLineHighlight = null  // Clear cross-line highlight
         currentDefinition = null
         showingNoResults = false
         invalidate()
