@@ -1,7 +1,6 @@
 package com.yomidroid.service
 
 import android.accessibilityservice.AccessibilityService
-import android.animation.ValueAnimator
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
@@ -18,7 +17,6 @@ import android.view.VelocityTracker
 import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
-import android.view.animation.DecelerateInterpolator
 import android.widget.Toast
 import kotlin.math.abs
 import kotlinx.coroutines.CoroutineScope
@@ -140,6 +138,18 @@ class YomidroidAccessibilityService : AccessibilityService() {
         )
         // Update overlay highlight color if it exists
         overlayView?.updateHighlightColor(colorConfig.highlightColor)
+        // Update FAB visibility based on setting
+        updateFabVisibility()
+    }
+
+    /**
+     * Update FAB visibility based on the fabEnabled setting.
+     * Called by TileService when the Quick Settings tile is toggled.
+     */
+    fun updateFabVisibility() {
+        val config = colorConfigManager?.getConfig() ?: return
+        fabView?.visibility = if (config.fabEnabled) View.VISIBLE else View.GONE
+        Log.d(TAG, "FAB visibility updated: enabled=${config.fabEnabled}")
     }
 
     private fun getStatusBarHeight(): Int {
@@ -296,7 +306,7 @@ class YomidroidAccessibilityService : AccessibilityService() {
                 object : TakeScreenshotCallback {
                     override fun onSuccess(result: ScreenshotResult) {
                         Log.d(TAG, "Screenshot success")
-                        fabView?.visibility = View.VISIBLE
+                        updateFabVisibility()
 
                         try {
                             val hardwareBuffer = result.hardwareBuffer
@@ -320,7 +330,7 @@ class YomidroidAccessibilityService : AccessibilityService() {
 
                     override fun onFailure(errorCode: Int) {
                         Log.e(TAG, "Screenshot failed with error code: $errorCode")
-                        fabView?.visibility = View.VISIBLE
+                        updateFabVisibility()
 
                         val errorMsg = when (errorCode) {
                             ERROR_TAKE_SCREENSHOT_INTERNAL_ERROR -> "Internal error"
@@ -658,7 +668,7 @@ class YomidroidAccessibilityService : AccessibilityService() {
 
         // Physics-based movement
         private var velocityTracker: VelocityTracker? = null
-        private var flingAnimator: ValueAnimator? = null
+        private var physicsAnimator: FabPhysicsAnimator? = null
 
         // Word snapping cache - stores lookup results for instant word highlighting
         private val lookupCache = mutableMapOf<String, CachedLookup>()
@@ -670,8 +680,7 @@ class YomidroidAccessibilityService : AccessibilityService() {
         }
 
         fun cancelFling() {
-            flingAnimator?.cancel()
-            flingAnimator = null
+            physicsAnimator?.cancelAll()
         }
 
         override fun onTouch(view: View, event: MotionEvent): Boolean {
@@ -679,8 +688,8 @@ class YomidroidAccessibilityService : AccessibilityService() {
 
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    // Cancel any ongoing fling
-                    flingAnimator?.cancel()
+                    // Cancel any ongoing physics animations
+                    physicsAnimator?.cancelAll()
 
                     // Start tracking velocity
                     velocityTracker?.recycle()
@@ -703,8 +712,37 @@ class YomidroidAccessibilityService : AccessibilityService() {
 
                     if (abs(dx) > 10 || abs(dy) > 10) {
                         isClick = false
-                        params.x = initialX + dx
-                        params.y = initialY + dy
+
+                        // Calculate new position with rubber-banding at edges
+                        var newX = initialX + dx
+                        var newY = initialY + dy
+
+                        val fabW = fabView?.width ?: 100
+                        val fabH = fabView?.height ?: 100
+                        val margin = 20
+
+                        val minX = -fabW + margin
+                        val maxX = screenWidth - margin
+                        val minY = -fabH + margin
+                        val maxY = screenHeight - margin
+
+                        // Rubber-band factor (0.3 = 30% of over-drag distance)
+                        val rubberBandFactor = 0.3f
+
+                        if (newX < minX) {
+                            newX = minX + ((newX - minX) * rubberBandFactor).toInt()
+                        } else if (newX > maxX) {
+                            newX = maxX + ((newX - maxX) * rubberBandFactor).toInt()
+                        }
+
+                        if (newY < minY) {
+                            newY = minY + ((newY - minY) * rubberBandFactor).toInt()
+                        } else if (newY > maxY) {
+                            newY = maxY + ((newY - maxY) * rubberBandFactor).toInt()
+                        }
+
+                        params.x = newX
+                        params.y = newY
                         windowManager.updateViewLayout(view, params)
 
                         // Perform cursor-based lookup if overlay is visible
@@ -734,12 +772,39 @@ class YomidroidAccessibilityService : AccessibilityService() {
                         }
                         lastTapTime = now
                     } else {
-                        // Drag ended - apply physics fling
+                        // Drag ended - apply physics-based fling
                         val vx = velocityTracker?.xVelocity ?: 0f
                         val vy = velocityTracker?.yVelocity ?: 0f
 
-                        if (abs(vx) > 200 || abs(vy) > 200) {
-                            applyFling(view, params, vx, vy)
+                        // Initialize or update physics animator
+                        if (physicsAnimator == null) {
+                            physicsAnimator = FabPhysicsAnimator(
+                                view = view,
+                                params = params,
+                                windowManager = windowManager,
+                                onPositionUpdate = {
+                                    if (overlayView != null) {
+                                        lookupAtCursor()
+                                    }
+                                }
+                            )
+                        }
+
+                        // Update dimensions
+                        physicsAnimator?.apply {
+                            screenWidth = this@YomidroidAccessibilityService.screenWidth
+                            screenHeight = this@YomidroidAccessibilityService.screenHeight
+                            fabWidth = fabView?.width ?: 100
+                            fabHeight = fabView?.height ?: 100
+                        }
+
+                        // Apply fling or spring back from rubber-band
+                        if (abs(vx) > FabPhysicsAnimator.MIN_FLING_VELOCITY ||
+                            abs(vy) > FabPhysicsAnimator.MIN_FLING_VELOCITY) {
+                            physicsAnimator?.fling(vx, vy)
+                        } else {
+                            // No fling velocity, but spring back if rubber-banded
+                            physicsAnimator?.fling(0f, 0f)
                         }
 
                         // Perform final lookup
@@ -754,46 +819,6 @@ class YomidroidAccessibilityService : AccessibilityService() {
                 }
             }
             return false
-        }
-
-        private fun applyFling(view: View, params: WindowManager.LayoutParams, vx: Float, vy: Float) {
-            val startX = params.x.toFloat()
-            val startY = params.y.toFloat()
-
-            // Calculate target position based on velocity (with damping)
-            val damping = 0.15f  // How far the fling carries
-            var targetX = startX + vx * damping
-            var targetY = startY + vy * damping
-
-            // Soft bounds - keep most of FAB on screen
-            val fabWidth = fabView?.width ?: 100
-            val fabHeight = fabView?.height ?: 100
-            val margin = 20  // Keep at least this much visible
-            targetX = targetX.coerceIn((-fabWidth + margin).toFloat(), (screenWidth - margin).toFloat())
-            targetY = targetY.coerceIn((-fabHeight + margin).toFloat(), (screenHeight - margin).toFloat())
-
-            flingAnimator?.cancel()
-            flingAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
-                duration = 300
-                interpolator = DecelerateInterpolator(2f)
-                addUpdateListener { animator ->
-                    val progress = animator.animatedValue as Float
-                    params.x = (startX + (targetX - startX) * progress).toInt()
-                    params.y = (startY + (targetY - startY) * progress).toInt()
-
-                    try {
-                        windowManager.updateViewLayout(view, params)
-
-                        // Update cursor lookup during fling
-                        if (overlayView != null) {
-                            lookupAtCursor()
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error updating view during fling: ${e.message}")
-                    }
-                }
-                start()
-            }
         }
 
         private fun lookupAtCursor() {

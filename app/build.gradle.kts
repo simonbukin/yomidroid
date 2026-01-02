@@ -69,6 +69,9 @@ dependencies {
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
+    // Physics-based animations for natural FAB movement
+    implementation("androidx.dynamicanimation:dynamicanimation:1.0.0")
+
     // JSON parsing
     implementation("com.google.code.gson:gson:2.10.1")
 

@@ -11,7 +11,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -58,6 +60,7 @@ fun HistoryScreen(
     var isLoading by remember { mutableStateOf(true) }
     var showClearDialog by remember { mutableStateOf(false) }
     var selectedFilter by remember { mutableStateOf(TimeFilter.ALL) }
+    var searchQuery by remember { mutableStateOf("") }
 
     // Anki exporter
     val ankiExporter = remember { AnkiDroidExporter(context) }
@@ -121,15 +124,18 @@ fun HistoryScreen(
         }
     }
 
-    // Load history when filter changes
-    LaunchedEffect(selectedFilter) {
+    // Load history when filter or search changes
+    LaunchedEffect(selectedFilter, searchQuery) {
         isLoading = true
         withContext(Dispatchers.IO) {
-            historyItems = if (selectedFilter == TimeFilter.ALL) {
-                AppDatabase.getInstance(context).historyDao().getAll()
-            } else {
-                val since = System.currentTimeMillis() - selectedFilter.durationMs
-                AppDatabase.getInstance(context).historyDao().getSince(since)
+            val dao = AppDatabase.getInstance(context).historyDao()
+            historyItems = when {
+                searchQuery.isNotEmpty() -> dao.search(searchQuery)
+                selectedFilter == TimeFilter.ALL -> dao.getAll()
+                else -> {
+                    val since = System.currentTimeMillis() - selectedFilter.durationMs
+                    dao.getSince(since)
+                }
             }
         }
         isLoading = false
@@ -178,57 +184,86 @@ fun HistoryScreen(
             )
         }
     ) { padding ->
-        Box(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            when {
-                isLoading -> {
-                    CircularProgressIndicator(
-                        modifier = Modifier.align(Alignment.Center)
-                    )
-                }
-                historyItems.isEmpty() -> {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(32.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Text(
-                            text = "No history yet",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "Lookups that you view for more than 1 second will appear here.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+            // Search TextField - always visible unless loading
+            if (!isLoading) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    placeholder = { Text("Search history...") },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search") },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(Icons.Default.Clear, contentDescription = "Clear")
+                            }
+                        }
+                    },
+                    singleLine = true
+                )
+
+                // Filter chips - always visible unless loading
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    TimeFilter.entries.forEach { filter ->
+                        FilterChip(
+                            selected = selectedFilter == filter,
+                            onClick = { selectedFilter = filter },
+                            label = { Text(filter.label) }
                         )
                     }
                 }
-                else -> {
-                    Column(modifier = Modifier.fillMaxSize()) {
-                        // Filter chips
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState())
-                                .padding(horizontal = 16.dp, vertical = 8.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            TimeFilter.entries.forEach { filter ->
-                                FilterChip(
-                                    selected = selectedFilter == filter,
-                                    onClick = { selectedFilter = filter },
-                                    label = { Text(filter.label) }
-                                )
-                            }
-                        }
+            }
 
+            // Content area
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .weight(1f)
+            ) {
+                when {
+                    isLoading -> {
+                        CircularProgressIndicator(
+                            modifier = Modifier.align(Alignment.Center)
+                        )
+                    }
+                    historyItems.isEmpty() -> {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(32.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            Text(
+                                text = if (searchQuery.isNotEmpty()) "No results found" else "No history yet",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = if (searchQuery.isNotEmpty())
+                                    "Try a different search term."
+                                else
+                                    "Lookups that you view for more than 1 second will appear here.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    else -> {
                         LazyColumn(
                             modifier = Modifier.fillMaxSize(),
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),

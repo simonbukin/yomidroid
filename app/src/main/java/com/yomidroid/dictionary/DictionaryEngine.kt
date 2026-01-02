@@ -63,11 +63,13 @@ class DictionaryEngine(context: Context) {
             }
         }
 
-        // Sort by: match length (longest first), then by score (highest first)
+        // Sort by: match length (longest first), then names last, frequency, score
         return results.sortedWith(
             compareByDescending<DictionaryEntry> { it.matchedText.length }
+                .thenBy { it.source == DictionarySource.JMNEDICT }  // Names last
+                .thenBy { it.frequencyRank ?: Int.MAX_VALUE }       // Higher frequency first
                 .thenByDescending { it.score }
-        ).distinctBy { "${it.expression}|${it.reading}" }
+        ).distinctBy { "${it.expression}|${it.reading}|${it.source}" }
     }
 
     /**
@@ -106,16 +108,20 @@ class DictionaryEngine(context: Context) {
     ): DictionaryEntry {
         val glossaryList = try {
             val type = object : TypeToken<List<String>>() {}.type
-            gson.fromJson<List<String>>(entity.glossary, type)
+            gson.fromJson<List<String>>(entity.glossary, type) ?: listOf(entity.glossary)
         } catch (e: Exception) {
             listOf(entity.glossary)
         }
 
         val posList = try {
             val type = object : TypeToken<List<String>>() {}.type
-            gson.fromJson<List<String>>(entity.partsOfSpeech, type)
+            gson.fromJson<List<String>>(entity.partsOfSpeech, type) ?: emptyList()
         } catch (e: Exception) {
-            entity.partsOfSpeech.split(",").map { it.trim() }
+            if (entity.partsOfSpeech.isNotEmpty()) {
+                entity.partsOfSpeech.split(",").map { it.trim() }
+            } else {
+                emptyList()
+            }
         }
 
         // Build deinflection path string
@@ -133,7 +139,10 @@ class DictionaryEngine(context: Context) {
             partsOfSpeech = posList,
             score = entity.score,
             matchedText = matchedText,
-            deinflectionPath = deinflectionPath
+            deinflectionPath = deinflectionPath,
+            source = DictionarySource.fromString(entity.source),
+            nameType = NameType.fromString(entity.nameType),
+            frequencyRank = entity.frequencyRank
         )
     }
 }

@@ -25,20 +25,45 @@ APK output: `app/build/outputs/apk/debug/app-debug.apk`
 
 ### Dictionary Setup (first-time only)
 
+The app bundles a multi-dictionary database with Jitendex (general terms) and JMnedict (names/places).
+
 ```bash
-wget http://ftp.edrdg.org/pub/Nihongo/JMdict_e.gz
-gunzip JMdict_e.gz
-cd tools
-python3 convert_jmdict.py JMdict_e.xml ../app/src/main/assets/dictionary.db
+cd tools/data
+
+# Download Jitendex (Yomitan format)
+curl -L -o jitendex.zip "https://github.com/stephenmk/stephenmk.github.io/releases/latest/download/jitendex-yomitan.zip"
+
+# Download JMnedict (names/places)
+curl -L -o JMnedict.xml.gz "http://ftp.edrdg.org/pub/Nihongo/JMnedict.xml.gz"
+gunzip JMnedict.xml.gz
+
+# Convert to unified SQLite database
+cd ..
+python3 convert_dictionaries.py \
+    --jitendex data/jitendex.zip \
+    --jmnedict data/JMnedict.xml \
+    --output ../app/src/main/assets/dictionary.db
+
+# Download Innocent Corpus frequency (5000+ VNs)
+curl -L -o innocent_corpus.zip "https://github.com/FooSoft/yomichan/raw/dictionaries/innocent_corpus.zip"
+
+# Re-run with frequency data
+python3 convert_dictionaries.py \
+    --jitendex data/jitendex.zip \
+    --jmnedict data/JMnedict.xml \
+    --frequency data/innocent_corpus.zip \
+    --output ../app/src/main/assets/dictionary.db
 ```
+
+The resulting database contains ~1M entries (292K Jitendex + 748K JMnedict) with 149K frequency rankings from the Innocent Corpus. APK size: ~178MB.
 
 ## Architecture Overview
 
-VNDict is a Japanese OCR dictionary overlay for Android that captures screen content, recognizes Japanese text via ML Kit, and performs Yomitan-style dictionary lookups with deinflection support.
+Yomidroid is a Japanese OCR dictionary overlay for Android that captures screen content, recognizes Japanese text via ML Kit, and performs Yomitan-style dictionary lookups with deinflection support.
 
 ### Core Components
 
-**VNDictAccessibilityService** (`service/VNDictAccessibilityService.kt`)
+**YomidroidAccessibilityService** (`service/YomidroidAccessibilityService.kt`)
 - Central coordinator running as an AccessibilityService
 - Manages screen capture, OCR pipeline, and overlay UI
 - Creates and positions the floating action button (CursorFabView)
@@ -54,9 +79,10 @@ VNDict is a Japanese OCR dictionary overlay for Android that captures screen con
 - Handles all verb/adjective conjugations, contractions, dialect forms
 
 **DictionaryDb** (`data/DictionaryDb.kt`)
-- Read-only SQLite access to JMDict data (pre-built in assets)
+- Read-only SQLite access to merged dictionary data (Jitendex + JMnedict)
 - Thread-safe lazy singleton pattern
 - Auto-copies from assets on first launch
+- Supports source attribution (source, name_type, frequency_rank columns)
 
 **OverlayTextView** (`service/OverlayTextView.kt`)
 - Custom View rendering screenshot, highlighted text regions, and dictionary popups

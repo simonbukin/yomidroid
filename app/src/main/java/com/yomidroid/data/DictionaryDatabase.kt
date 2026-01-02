@@ -68,6 +68,15 @@ interface LookupHistoryDao {
 
     @Query("DELETE FROM lookup_history")
     suspend fun deleteAll()
+
+    @Query("""
+        SELECT * FROM lookup_history
+        WHERE word LIKE '%' || :query || '%'
+           OR reading LIKE '%' || :query || '%'
+           OR definition LIKE '%' || :query || '%'
+        ORDER BY timestamp DESC
+    """)
+    suspend fun search(query: String): List<LookupHistoryEntity>
 }
 
 /**

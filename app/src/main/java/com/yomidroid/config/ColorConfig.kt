@@ -11,7 +11,8 @@ data class ColorConfig(
     val accentColor: Int = DEFAULT_ACCENT,           // App theme primary (buttons, links)
     val highlightColor: Int = DEFAULT_HIGHLIGHT,     // OCR text highlight overlay
     val fabColor: Int = DEFAULT_FAB,                 // FAB main circle
-    val cursorDotColor: Int = DEFAULT_CURSOR         // Selection cursor dot
+    val cursorDotColor: Int = DEFAULT_CURSOR,        // Selection cursor dot
+    val fabEnabled: Boolean = true                   // Whether FAB overlay is visible
 ) {
     companion object {
         val DEFAULT_ACCENT = 0xFF2196F3.toInt()                  // Blue
@@ -36,6 +37,7 @@ class ColorConfigManager(context: Context) {
         private const val KEY_HIGHLIGHT_COLOR = "highlight_color"
         private const val KEY_FAB_COLOR = "fab_color"
         private const val KEY_CURSOR_DOT_COLOR = "cursor_dot_color"
+        private const val KEY_FAB_ENABLED = "fab_enabled"
     }
 
     fun getConfig(): ColorConfig {
@@ -43,7 +45,8 @@ class ColorConfigManager(context: Context) {
             accentColor = prefs.getInt(KEY_ACCENT_COLOR, ColorConfig.DEFAULT_ACCENT),
             highlightColor = prefs.getInt(KEY_HIGHLIGHT_COLOR, ColorConfig.DEFAULT_HIGHLIGHT),
             fabColor = prefs.getInt(KEY_FAB_COLOR, ColorConfig.DEFAULT_FAB),
-            cursorDotColor = prefs.getInt(KEY_CURSOR_DOT_COLOR, ColorConfig.DEFAULT_CURSOR)
+            cursorDotColor = prefs.getInt(KEY_CURSOR_DOT_COLOR, ColorConfig.DEFAULT_CURSOR),
+            fabEnabled = prefs.getBoolean(KEY_FAB_ENABLED, true)
         )
     }
 
@@ -53,7 +56,17 @@ class ColorConfigManager(context: Context) {
             .putInt(KEY_HIGHLIGHT_COLOR, config.highlightColor)
             .putInt(KEY_FAB_COLOR, config.fabColor)
             .putInt(KEY_CURSOR_DOT_COLOR, config.cursorDotColor)
+            .putBoolean(KEY_FAB_ENABLED, config.fabEnabled)
             .apply()
+    }
+
+    /**
+     * Quick access for FAB enabled state (used by TileService).
+     */
+    fun isFabEnabled(): Boolean = prefs.getBoolean(KEY_FAB_ENABLED, true)
+
+    fun setFabEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_FAB_ENABLED, enabled).apply()
     }
 
     fun resetToDefaults() {

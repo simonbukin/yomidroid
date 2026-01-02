@@ -4,6 +4,9 @@ import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.*
 import android.graphics.drawable.Drawable
+import android.text.Layout
+import android.text.StaticLayout
+import android.text.TextPaint
 import android.view.MotionEvent
 import android.view.View
 import android.view.animation.DecelerateInterpolator
@@ -139,6 +142,32 @@ class OverlayTextView(
         textSize = 14f * density
         typeface = Typeface.DEFAULT_BOLD
         textAlign = Paint.Align.CENTER
+    }
+
+    // Badge paints for frequency and name type
+    private val frequencyBadgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(220, 76, 175, 80)  // Material green
+        textSize = 11f * density
+        typeface = Typeface.DEFAULT_BOLD
+    }
+
+    private val frequencyBadgeBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(40, 76, 175, 80)  // Light green background
+    }
+
+    private val nameBadgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(220, 255, 152, 0)  // Material orange
+        textSize = 11f * density
+        typeface = Typeface.DEFAULT_BOLD
+    }
+
+    private val nameBadgeBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(40, 255, 152, 0)  // Light orange background
+    }
+
+    private val sourceLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(100, 255, 255, 255)  // Subtle white
+        textSize = 10f * density
     }
 
     // Anki icon drawable
@@ -296,6 +325,7 @@ class OverlayTextView(
 
         val paddingH = 20f * density
         val paddingV = 16f * density
+        val sourceLabelSpace = 20f * density  // Space reserved for source label at bottom
         val maxWidth = width * 0.9f
         val maxHeight = height * 0.6f  // Max 60% of screen height
         val cornerRadius = 12f * density
@@ -319,8 +349,15 @@ class OverlayTextView(
         // Show all glossary entries (no truncation for scrolling)
         val glosses = entry.glossary
 
-        // Calculate popup width based on content (add space for Anki button)
+        // Calculate popup width based on content (add space for badges and Anki button)
         var contentWidth = headwordPaint.measureText(headword)
+        // Add space for badges on the headword line
+        entry.frequencyBadge?.let {
+            contentWidth += frequencyBadgePaint.measureText(it) + 20f * density
+        }
+        entry.nameTypeLabel?.let {
+            contentWidth += nameBadgePaint.measureText(it) + 20f * density
+        }
         if (showAnkiButton) {
             contentWidth += ankiButtonWidth + ankiButtonMargin
         }
@@ -332,22 +369,43 @@ class OverlayTextView(
         }
         val popupWidth = minOf(contentWidth + paddingH * 2, maxWidth)
 
+        // Calculate available width for wrapped gloss text
+        val glossNumberWidth = 20f * density  // Space for "1.", "2.", etc.
+        val glossTextWidth = (popupWidth - paddingH * 2 - glossNumberWidth).toInt().coerceAtLeast(100)
+
+        // Create TextPaint for StaticLayout
+        val glossTextPaintForLayout = TextPaint(glossPaint)
+
+        // Pre-calculate wrapped gloss layouts and their heights
+        val glossLayouts = glosses.map { gloss ->
+            StaticLayout.Builder.obtain(gloss, 0, gloss.length, glossTextPaintForLayout, glossTextWidth)
+                .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+                .setLineSpacing(0f, 1f)
+                .setIncludePad(false)
+                .build()
+        }
+
         // Calculate full content height (for scrolling)
+        // Must match actual Y positioning in rendering code below
         var fullContentHeight = headwordPaint.textSize  // Headword
-        reading?.let { fullContentHeight += readingPaint.textSize + 4f * density }  // Reading
-        deinflection?.let { fullContentHeight += deinflectPaint.textSize + 8f * density }  // Deinflection
-        if (glosses.isNotEmpty()) {
-            fullContentHeight += 12f * density  // Gap before glosses
-            fullContentHeight += glosses.size * (glossPaint.textSize + 6f * density)
+        fullContentHeight += headwordPaint.textSize * 0.3f  // Extra space after headword
+        reading?.let { fullContentHeight += readingPaint.textSize + 2f * density }
+        deinflection?.let { fullContentHeight += deinflectPaint.textSize + 8f * density }
+        if (glossLayouts.isNotEmpty()) {
+            fullContentHeight += 14f * density  // Gap before glosses
+            glossLayouts.forEachIndexed { index, layout ->
+                fullContentHeight += layout.height + 4f * density  // Each wrapped gloss + spacing
+            }
         }
 
         // Calculate visible height (capped at maxHeight)
-        val fullPopupHeight = fullContentHeight + paddingV * 2
+        // Include sourceLabelSpace in popup height so content area isn't shrunk
+        val fullPopupHeight = fullContentHeight + paddingV * 2 + sourceLabelSpace
         val popupHeight = minOf(fullPopupHeight, maxHeight)
 
-        // Track heights for scrolling
+        // Track heights for scrolling (account for source label space at bottom)
         popupContentHeight = fullContentHeight
-        popupVisibleHeight = popupHeight - paddingV * 2
+        popupVisibleHeight = popupHeight - paddingV * 2 - sourceLabelSpace
 
         // Position popup - prefer above cursor, fallback to below
         var finalX = popupX - popupWidth / 2
@@ -466,13 +524,67 @@ class OverlayTextView(
         val glossNumPaint = Paint(glossNumberPaint).apply { this.alpha = (120 * alpha).toInt() }
 
         // Save canvas state and apply clipping for scrollable content
+        // Leave room at bottom for source label
         canvas.save()
-        canvas.clipRect(finalX, finalY + paddingV, finalX + popupWidth, finalY + popupHeight - paddingV)
+        canvas.clipRect(finalX, finalY + paddingV, finalX + popupWidth, finalY + popupHeight - paddingV - sourceLabelSpace)
 
         var y = finalY + paddingV + headwordPaint.textSize * 0.85f - popupScrollY
 
         // Headword
         canvas.drawText(headword, finalX + paddingH, y, headPaint)
+        var badgeX = finalX + paddingH + headwordPaint.measureText(headword) + 8f * density
+        // Calculate max badge position to avoid overlapping Anki button
+        val maxBadgeX = if (showAnkiButton) {
+            finalX + popupWidth - ankiButtonWidth - ankiButtonMargin - 8f * density
+        } else {
+            finalX + popupWidth - paddingH
+        }
+
+        // Draw frequency badge (green pill) next to headword (only if it fits)
+        entry.frequencyBadge?.let { badge ->
+            val badgePadH = 6f * density
+            val badgePadV = 2f * density
+            val badgeWidth = frequencyBadgePaint.measureText(badge) + badgePadH * 2
+            val badgeHeight = frequencyBadgePaint.textSize + badgePadV * 2
+
+            // Only draw if badge fits before Anki button
+            if (badgeX + badgeWidth <= maxBadgeX) {
+                val badgeY = y - headwordPaint.textSize + (headwordPaint.textSize - badgeHeight) / 2
+
+                // Draw badge background
+                val freqBgPaint = Paint(frequencyBadgeBgPaint).apply { this.alpha = (alpha * 255).toInt() }
+                val badgeRect = RectF(badgeX, badgeY, badgeX + badgeWidth, badgeY + badgeHeight)
+                canvas.drawRoundRect(badgeRect, badgeHeight / 2, badgeHeight / 2, freqBgPaint)
+
+                // Draw badge text
+                val freqTextPaint = Paint(frequencyBadgePaint).apply { this.alpha = (alpha * 255).toInt() }
+                canvas.drawText(badge, badgeX + badgePadH, badgeY + badgeHeight - badgePadV - 1f * density, freqTextPaint)
+                badgeX += badgeWidth + 6f * density
+            }
+        }
+
+        // Draw name type badge (orange pill) for JMnedict entries (only if it fits)
+        entry.nameTypeLabel?.let { label ->
+            val badgePadH = 6f * density
+            val badgePadV = 2f * density
+            val badgeWidth = nameBadgePaint.measureText(label) + badgePadH * 2
+            val badgeHeight = nameBadgePaint.textSize + badgePadV * 2
+
+            // Only draw if badge fits before Anki button
+            if (badgeX + badgeWidth <= maxBadgeX) {
+                val badgeY = y - headwordPaint.textSize + (headwordPaint.textSize - badgeHeight) / 2
+
+                // Draw badge background
+                val nameBgPaint = Paint(nameBadgeBgPaint).apply { this.alpha = (alpha * 255).toInt() }
+                val badgeRect = RectF(badgeX, badgeY, badgeX + badgeWidth, badgeY + badgeHeight)
+                canvas.drawRoundRect(badgeRect, badgeHeight / 2, badgeHeight / 2, nameBgPaint)
+
+                // Draw badge text
+                val nameTextPaint = Paint(nameBadgePaint).apply { this.alpha = (alpha * 255).toInt() }
+                canvas.drawText(label, badgeX + badgePadH, badgeY + badgeHeight - badgePadV - 1f * density, nameTextPaint)
+            }
+        }
+
         y += headwordPaint.textSize * 0.3f
 
         // Reading (if different from headword)
@@ -487,21 +599,36 @@ class OverlayTextView(
             canvas.drawText(it, finalX + paddingH, y, deinPaint)
         }
 
-        // Glossary - show all entries
-        if (glosses.isNotEmpty()) {
+        // Glossary - show all entries with text wrapping
+        if (glossLayouts.isNotEmpty()) {
             y += 14f * density
-            glosses.forEachIndexed { index, gloss ->
-                y += glossPaint.textSize + 4f * density
-                // Draw number
+            glossLayouts.forEachIndexed { index, layout ->
+                y += 4f * density  // Spacing before each entry
+                // Draw number aligned with first line of wrapped text
                 val numText = "${index + 1}."
-                canvas.drawText(numText, finalX + paddingH, y, glossNumPaint)
-                // Draw gloss (full text, clipping handles overflow)
-                canvas.drawText(gloss, finalX + paddingH + 20f * density, y, glossTextPaint)
+                canvas.drawText(numText, finalX + paddingH, y + glossPaint.textSize * 0.85f, glossNumPaint)
+                // Draw wrapped gloss text using StaticLayout
+                canvas.save()
+                canvas.translate(finalX + paddingH + glossNumberWidth, y)
+                layout.draw(canvas)
+                canvas.restore()
+                y += layout.height  // Move past the wrapped text
             }
         }
 
         // Restore canvas state
         canvas.restore()
+
+        // Draw source label at bottom-right of popup (outside clip region)
+        val srcLabelPaint = Paint(sourceLabelPaint).apply { this.alpha = (alpha * 255).toInt() }
+        val sourceLabel = entry.sourceLabel
+        val labelWidth = sourceLabelPaint.measureText(sourceLabel)
+        canvas.drawText(
+            sourceLabel,
+            finalX + popupWidth - paddingH - labelWidth,
+            finalY + popupHeight - 6f * density,
+            srcLabelPaint
+        )
 
         // Draw scroll indicator if content overflows
         if (popupContentHeight > popupVisibleHeight) {

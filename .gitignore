@@ -57,9 +57,13 @@ ehthumbs.db
 *.db
 dictionary.db
 
-# JMDict source files
+# JMDict/dictionary source files
 JMdict*
+JMnedict*
 *.gz
+
+# Dictionary tool data directory (large source/output files)
+tools/data/
 
 # Temporary files
 *.tmp

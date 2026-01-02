@@ -15,7 +15,9 @@ class DictionaryDb private constructor(context: Context) {
     companion object {
         private const val ASSET_DB_NAME = "dictionary.db"
         private const val DB_NAME = "dictionary.db" // Stored separately from Room's yomidroid_history.db
-        private const val DB_VERSION = 1
+        private const val DB_VERSION = 3 // Increment when schema changes to force re-copy
+        private const val PREFS_NAME = "dictionary_prefs"
+        private const val PREF_DB_VERSION = "db_version"
 
         @Volatile
         private var INSTANCE: DictionaryDb? = null
@@ -37,10 +39,18 @@ class DictionaryDb private constructor(context: Context) {
 
     init {
         val dbPath = context.getDatabasePath(DB_NAME)
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val storedVersion = prefs.getInt(PREF_DB_VERSION, 0)
 
-        // Copy from assets if needed
-        if (!dbPath.exists()) {
+        // Copy from assets if DB doesn't exist OR if version changed (schema update)
+        if (!dbPath.exists() || storedVersion < DB_VERSION) {
+            // Delete old database if it exists
+            if (dbPath.exists()) {
+                dbPath.delete()
+            }
             copyDatabaseFromAssets(context, dbPath)
+            // Store the new version
+            prefs.edit().putInt(PREF_DB_VERSION, DB_VERSION).apply()
         }
 
         database = SQLiteDatabase.openDatabase(
@@ -62,12 +72,27 @@ class DictionaryDb private constructor(context: Context) {
 
     /**
      * Find terms by expression or reading (exact match).
+     * Returns results sorted by: frequency rank (if present), score, then names last.
      */
     fun findByExpressionOrReading(query: String): List<TermData> {
         val results = mutableListOf<TermData>()
 
+        // Query with new columns, handling backwards compatibility
         database.rawQuery(
-            "SELECT id, expression, reading, glossary, pos, score, sequence FROM terms WHERE expression = ? OR reading = ? ORDER BY score DESC LIMIT 20",
+            """
+            SELECT id, expression, reading, glossary, pos, score, sequence,
+                   COALESCE(source, 'jitendex') as source,
+                   name_type,
+                   frequency_rank
+            FROM terms
+            WHERE expression = ? OR reading = ?
+            ORDER BY
+                CASE WHEN frequency_rank IS NOT NULL THEN 0 ELSE 1 END,
+                frequency_rank ASC,
+                score DESC,
+                CASE WHEN source = 'jmnedict' THEN 1 ELSE 0 END
+            LIMIT 30
+            """.trimIndent(),
             arrayOf(query, query)
         ).use { cursor ->
             while (cursor.moveToNext()) {
@@ -79,7 +104,10 @@ class DictionaryDb private constructor(context: Context) {
                         glossary = cursor.getString(3),
                         partsOfSpeech = cursor.getString(4) ?: "",
                         score = cursor.getInt(5),
-                        sequence = cursor.getInt(6)
+                        sequence = cursor.getInt(6),
+                        source = cursor.getString(7) ?: "jitendex",
+                        nameType = cursor.getString(8),
+                        frequencyRank = if (cursor.isNull(9)) null else cursor.getInt(9)
                     )
                 )
             }
@@ -123,5 +151,9 @@ data class TermData(
     val glossary: String, // JSON array
     val partsOfSpeech: String, // JSON array
     val score: Int,
-    val sequence: Int
+    val sequence: Int,
+    // Multi-dictionary support
+    val source: String = "jitendex", // 'jitendex' | 'jmnedict'
+    val nameType: String? = null, // For JMnedict: 'person' | 'place' | 'surname' | etc.
+    val frequencyRank: Int? = null // VN frequency rank (1 = most common)
 )
