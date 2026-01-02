@@ -63,12 +63,12 @@ class DictionaryEngine(context: Context) {
             }
         }
 
-        // Sort by: match length (longest first), then names last, frequency, score
+        // Sort by: match length (longest first), names last, score, then frequency
         return results.sortedWith(
             compareByDescending<DictionaryEntry> { it.matchedText.length }
                 .thenBy { it.source == DictionarySource.JMNEDICT }  // Names last
-                .thenBy { it.frequencyRank ?: Int.MAX_VALUE }       // Higher frequency first
-                .thenByDescending { it.score }
+                .thenByDescending { it.score }                       // Score first (particles have high scores)
+                .thenBy { it.frequencyRank ?: Int.MAX_VALUE }        // Then frequency
         ).distinctBy { "${it.expression}|${it.reading}|${it.source}" }
     }
 

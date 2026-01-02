@@ -85,6 +85,9 @@ dependencies {
     // JSON parsing
     implementation("com.google.code.gson:gson:2.10.1")
 
+    // RapidOCR (PaddleOCR-based ONNX engine)
+    implementation(project(":OcrLibrary"))
+
     // Kuromoji Japanese morphological analyzer (for Grammar Analyzer)
     implementation("com.atilika.kuromoji:kuromoji-ipadic:0.9.0")
 

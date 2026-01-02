@@ -24,11 +24,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.text.Text
-import com.google.mlkit.vision.text.TextRecognition
-import com.google.mlkit.vision.text.japanese.JapaneseTextRecognizerOptions
+import kotlinx.coroutines.withContext
 import com.yomidroid.anki.AnkiDroidExporter
+import com.yomidroid.config.OcrConfig
+import com.yomidroid.config.OcrConfigManager
+import com.yomidroid.ocr.OcrEngine
+import com.yomidroid.ocr.OcrEngineFactory
 import com.yomidroid.anki.ExportResult
 import com.yomidroid.config.ColorConfig
 import com.yomidroid.config.ColorConfigManager
@@ -42,7 +43,7 @@ class YomidroidAccessibilityService : AccessibilityService() {
     // Word snapping cache entry - stores lookup results for instant word highlighting
     private data class CachedLookup(
         val matchLength: Int,
-        val entry: com.yomidroid.dictionary.DictionaryEntry?
+        val entries: List<com.yomidroid.dictionary.DictionaryEntry>
     )
 
     companion object {
@@ -91,9 +92,9 @@ class YomidroidAccessibilityService : AccessibilityService() {
     // Keep clean screenshot for Anki export
     private var currentScreenshot: Bitmap? = null
 
-    private val textRecognizer by lazy {
-        TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build())
-    }
+    // OCR engine system
+    private var ocrEngine: OcrEngine? = null
+    private var ocrConfigManager: OcrConfigManager? = null
 
     private var dictionaryEngine: DictionaryEngine? = null
     private var ankiExporter: AnkiDroidExporter? = null
@@ -126,8 +127,35 @@ class YomidroidAccessibilityService : AccessibilityService() {
         colorConfigManager = ColorConfigManager(this)
         loadColors()
 
+        // Initialize OCR engine based on config
+        ocrConfigManager = OcrConfigManager(this)
+        initializeOcrEngine()
+
         // Create FAB
         createFab()
+    }
+
+    /**
+     * Initialize OCR engine based on current config.
+     * Called on service start and when settings change.
+     */
+    private fun initializeOcrEngine() {
+        val config = ocrConfigManager?.getConfig() ?: OcrConfig()
+
+        // Close existing engine
+        ocrEngine?.close()
+
+        // Create engine based on config
+        ocrEngine = OcrEngineFactory.createEngine(this, config.selectedEngine)
+
+        Log.d(TAG, "OCR engine initialized: ${config.selectedEngine}")
+    }
+
+    /**
+     * Reload OCR settings (call when settings change).
+     */
+    fun reloadOcrSettings() {
+        initializeOcrEngine()
     }
 
     /**
@@ -206,7 +234,9 @@ class YomidroidAccessibilityService : AccessibilityService() {
 
         removeFab()
         removeOverlay()
-        textRecognizer.close()
+
+        // Close OCR engine
+        ocrEngine?.close()
     }
 
     private fun createFab() {
@@ -360,51 +390,38 @@ class YomidroidAccessibilityService : AccessibilityService() {
     }
 
     private fun processOcr(bitmap: Bitmap) {
-        val inputImage = InputImage.fromBitmap(bitmap, 0)
+        val engine = ocrEngine ?: return
 
-        textRecognizer.process(inputImage)
-            .addOnSuccessListener { visionText ->
-                Log.d(TAG, "OCR success, found ${visionText.textBlocks.size} blocks")
-                val results = mergeAdjacentLines(extractOcrResults(visionText))
-                if (results.isNotEmpty()) {
-                    showTextOverlay(results, bitmap)
-                } else {
-                    Log.d(TAG, "No OCR results found")
-                    Toast.makeText(this, "No text found", Toast.LENGTH_SHORT).show()
-                }
-            }
-            .addOnFailureListener { e ->
-                Log.e(TAG, "OCR failed: ${e.message}", e)
-            }
-    }
+        serviceScope.launch {
+            val result = engine.processImage(bitmap)
 
-    private fun extractOcrResults(visionText: Text): List<OcrResult> {
-        val results = mutableListOf<OcrResult>()
-
-        for (block in visionText.textBlocks) {
-            for (line in block.lines) {
-                val lineText = line.text
-                val charBounds = mutableListOf<Rect>()
-
-                for (element in line.elements) {
-                    for (symbol in element.symbols) {
-                        symbol.boundingBox?.let { charBounds.add(it) }
+            withContext(Dispatchers.Main) {
+                result.fold(
+                    onSuccess = { ocrResults ->
+                        Log.d(TAG, "OCR success, found ${ocrResults.size} results")
+                        val merged = mergeAdjacentLines(ocrResults)
+                        if (merged.isNotEmpty()) {
+                            showTextOverlay(merged, bitmap)
+                        } else {
+                            Log.d(TAG, "No OCR results found")
+                            Toast.makeText(
+                                this@YomidroidAccessibilityService,
+                                "No text found",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    },
+                    onFailure = { e ->
+                        Log.e(TAG, "OCR failed: ${e.message}", e)
+                        Toast.makeText(
+                            this@YomidroidAccessibilityService,
+                            "OCR failed: ${e.message}",
+                            Toast.LENGTH_SHORT
+                        ).show()
                     }
-                }
-
-                if (charBounds.size == lineText.length) {
-                    line.boundingBox?.let { lineBounds ->
-                        results.add(OcrResult(lineText, lineBounds, charBounds))
-                    }
-                } else if (charBounds.isNotEmpty()) {
-                    line.boundingBox?.let { lineBounds ->
-                        results.add(OcrResult(lineText, lineBounds, charBounds))
-                    }
-                }
+                )
             }
         }
-
-        return results
     }
 
     /**
@@ -669,12 +686,12 @@ class YomidroidAccessibilityService : AccessibilityService() {
 
             handler.post {
                 if (entries.isNotEmpty()) {
-                    val entry = entries.first()
-                    // Show definition with unified match info for cross-line highlighting
-                    overlayView?.showDefinitionWithUnifiedMatch(
-                        entry = entry,
+                    val firstEntry = entries.first()
+                    // Show all definitions with unified match info for cross-line highlighting
+                    overlayView?.showDefinitionsWithUnifiedMatch(
+                        entries = entries,
                         unifiedStartIndex = unifiedIndex,
-                        matchLength = entry.matchedText.length,
+                        matchLength = firstEntry.matchedText.length,
                         context = context
                     )
                 } else {
@@ -891,8 +908,8 @@ class YomidroidAccessibilityService : AccessibilityService() {
             if (cached != null) {
                 // Cache hit - immediately highlight full word (may span OcrResults)
                 overlay.setHighlightFromUnified(context, unifiedIndex, cached.matchLength)
-                if (cached.entry != null) {
-                    overlay.showDefinitionAtCursor(cached.entry, cursorX, cursorY)
+                if (cached.entries.isNotEmpty()) {
+                    overlay.showDefinitionsAtCursor(cached.entries, cursorX, cursorY)
                 } else {
                     overlay.hideDefinition()
                 }
@@ -902,19 +919,19 @@ class YomidroidAccessibilityService : AccessibilityService() {
             // Cache miss - show single char highlight immediately as fallback
             overlay.setHighlight(ocrResult, charIndex, 1)
 
-            // Perform dictionary lookup on background thread using unified text
+            // Perform dictionary lookup on low-priority background thread
+            // Low priority to avoid competing with emulator audio threads (e.g., PPSSPP)
             Thread {
                 val searchText = context.unifiedText.substring(unifiedIndex)
                 val entries = dictionaryEngine?.findTerms(searchText) ?: emptyList()
-                val entry = entries.firstOrNull()
-                val matchLength = entry?.matchedText?.length ?: 1
+                val matchLength = entries.firstOrNull()?.matchedText?.length ?: 1
 
                 // Cache the result for instant lookup on subsequent cursor moves
                 synchronized(lookupCache) {
                     if (lookupCache.size > MAX_LOOKUP_CACHE_SIZE) {
                         lookupCache.clear()
                     }
-                    lookupCache[cacheKey] = CachedLookup(matchLength, entry)
+                    lookupCache[cacheKey] = CachedLookup(matchLength, entries)
                 }
 
                 handler.post {
@@ -922,8 +939,8 @@ class YomidroidAccessibilityService : AccessibilityService() {
                     if (context.unifiedText == lastLookedUpText && unifiedIndex == lastLookedUpIndex) {
                         // Use unified highlighting for cross-line matches
                         overlay.setHighlightFromUnified(context, unifiedIndex, matchLength)
-                        if (entry != null) {
-                            overlay.showDefinitionAtCursor(entry, cursorX, cursorY)
+                        if (entries.isNotEmpty()) {
+                            overlay.showDefinitionsAtCursor(entries, cursorX, cursorY)
                         } else {
                             overlay.hideDefinition()
                         }

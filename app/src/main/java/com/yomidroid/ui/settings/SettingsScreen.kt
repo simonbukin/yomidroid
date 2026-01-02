@@ -26,6 +26,7 @@ import com.yomidroid.service.YomidroidAccessibilityService
 fun SettingsScreen(
     onOpenAnkiSettings: () -> Unit,
     onOpenColorSettings: () -> Unit,
+    onOpenOcrSettings: () -> Unit,
     onOpenAccessibilitySettings: () -> Unit
 ) {
     val context = LocalContext.current
@@ -86,6 +87,22 @@ fun SettingsScreen(
                         )
                     }
                 }
+            )
+
+            Divider(modifier = Modifier.padding(horizontal = 16.dp))
+
+            // Recognition Section
+            Text(
+                text = "Recognition",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+            )
+
+            SettingsItem(
+                title = "OCR Engine",
+                subtitle = "Choose between on-device or cloud OCR",
+                onClick = onOpenOcrSettings
             )
 
             Divider(modifier = Modifier.padding(horizontal = 16.dp))

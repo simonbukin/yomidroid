@@ -29,6 +29,7 @@ import com.yomidroid.data.DictionaryLoader
 import com.yomidroid.service.YomidroidAccessibilityService
 import com.yomidroid.ui.AnkiSettingsScreen
 import com.yomidroid.ui.ColorSettingsScreen
+import com.yomidroid.ui.OcrSettingsScreen
 import com.yomidroid.ui.history.HistoryDetailScreen
 import com.yomidroid.ui.history.HistoryScreen
 import com.yomidroid.ui.settings.SettingsScreen
@@ -45,6 +46,7 @@ sealed class Screen(val route: String) {
     object Settings : Screen("settings")
     object AnkiSettings : Screen("anki_settings")
     object ColorSettings : Screen("color_settings")
+    object OcrSettings : Screen("ocr_settings")
 }
 
 class MainActivity : ComponentActivity() {
@@ -77,6 +79,9 @@ class MainActivity : ComponentActivity() {
                     }
                     Screen.ColorSettings -> {
                         ColorSettingsScreen(onBack = { currentScreen = Screen.Settings })
+                    }
+                    Screen.OcrSettings -> {
+                        OcrSettingsScreen(onBack = { currentScreen = Screen.Settings })
                     }
                     Screen.GrammarAnalyzer -> {
                         GrammarAnalyzerScreen(onBack = { currentScreen = Screen.Tools })
@@ -174,6 +179,7 @@ fun MainAppContent(
                 Screen.Settings -> SettingsScreen(
                     onOpenAnkiSettings = { onNavigate(Screen.AnkiSettings) },
                     onOpenColorSettings = { onNavigate(Screen.ColorSettings) },
+                    onOpenOcrSettings = { onNavigate(Screen.OcrSettings) },
                     onOpenAccessibilitySettings = onOpenAccessibilitySettings
                 )
                 else -> HomeScreen(onOpenAccessibilitySettings = onOpenAccessibilitySettings)

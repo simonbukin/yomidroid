@@ -176,18 +176,25 @@ class OverlayTextView(
     // Anki icon drawable
     private val ankiIcon: Drawable? = ContextCompat.getDrawable(context, R.drawable.ic_anki)
 
-    // Track Anki button bounds for touch detection
-    private var ankiButtonBounds: RectF? = null
+    // Track Anki button bounds for touch detection (one per entry in vertical list)
+    private var ankiButtonBoundsList: MutableList<RectF> = mutableListOf()
 
-    // Track Anki export state for current definition
-    private var ankiButtonState: AnkiButtonState = AnkiButtonState.IDLE
+    // Track Anki export state per entry (index -> state)
+    private var ankiButtonStates: MutableMap<Int, AnkiButtonState> = mutableMapOf()
     private var loadingAnimator: ValueAnimator? = null
     private var loadingAngle: Float = 0f
+    private var loadingEntryIndex: Int = -1  // Which entry is currently loading
 
     private var selectedResult: OcrResult? = null
     private var selectedCharIndex: Int = -1
     private var selectedMatchLength: Int = 1  // How many characters are matched
-    private var currentDefinition: DictionaryEntry? = null
+
+    // Multi-definition support
+    private var currentDefinitions: List<DictionaryEntry> = emptyList()
+    private var selectedDefinitionIndex: Int = 0
+    private val currentDefinition: DictionaryEntry?
+        get() = currentDefinitions.getOrNull(selectedDefinitionIndex)
+
     private var popupX: Float = 0f
     private var popupY: Float = 0f
     private var showingNoResults: Boolean = false
@@ -237,17 +244,8 @@ class OverlayTextView(
     }
 
     init {
-        // Fade in highlights on creation
-        highlightAlpha = 0f
-        highlightAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 200
-            interpolator = DecelerateInterpolator()
-            addUpdateListener {
-                highlightAlpha = it.animatedValue as Float
-                invalidate()
-            }
-            start()
-        }
+        // Skip animation to reduce CPU load (helps with emulator audio)
+        highlightAlpha = 1f
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -303,9 +301,9 @@ class OverlayTextView(
             }
         }
 
-        // Draw definition popup if present (with alpha)
-        currentDefinition?.let { entry ->
-            drawDefinitionPopup(canvas, entry)
+        // Draw definitions list if present (with alpha)
+        if (currentDefinitions.isNotEmpty()) {
+            drawDefinitionsList(canvas, currentDefinitions)
         }
 
         // Draw "no results" message if needed
@@ -338,111 +336,112 @@ class OverlayTextView(
         canvas.drawText(message, px + padding, py + popupHeight / 2 + readingPaint.textSize / 3, textPaint)
     }
 
-    private fun drawDefinitionPopup(canvas: Canvas, entry: DictionaryEntry) {
-        if (popupAlpha <= 0f) return
+    /**
+     * Draw all definitions in a vertical scrollable list.
+     * Each entry shows full details: headword, reading, deinflection, all glosses, badges, source.
+     * Entries are separated by dividers.
+     */
+    private fun drawDefinitionsList(canvas: Canvas, entries: List<DictionaryEntry>) {
+        if (popupAlpha <= 0f || entries.isEmpty()) return
 
         val paddingH = 20f * density
         val paddingV = 16f * density
-        val sourceLabelSpace = 20f * density  // Space reserved for source label at bottom
         val maxWidth = width * 0.9f
-        val maxHeight = height * 0.6f  // Max 60% of screen height
+        val maxHeight = height * 0.65f  // Constrain height
         val cornerRadius = 12f * density
-
-        // Anki button dimensions
+        val dividerHeight = 16f * density
         val ankiButtonWidth = 36f * density
         val ankiButtonHeight = 28f * density
         val ankiButtonMargin = 8f * density
         val showAnkiButton = onAnkiExport != null
 
-        // Calculate content
-        val headword = entry.expression
-        val reading = if (entry.reading.isNotEmpty() && entry.reading != entry.expression) {
-            entry.reading
-        } else null
+        val alpha = popupAlpha
 
-        val deinflection = if (entry.deinflectionPath.isNotEmpty()) {
-            "→ ${entry.deinflectionPath}"
-        } else null
+        // Pre-calculate each entry's height and create gloss layouts
+        data class EntryLayout(
+            val entry: DictionaryEntry,
+            val glossLayouts: List<StaticLayout>,
+            val height: Float
+        )
 
-        // Show all glossary entries (no truncation for scrolling)
-        val glosses = entry.glossary
-
-        // Calculate popup width based on content (add space for badges and Anki button)
-        var contentWidth = headwordPaint.measureText(headword)
-        // Add space for badges on the headword line
-        entry.frequencyBadge?.let {
-            contentWidth += frequencyBadgePaint.measureText(it) + 20f * density
-        }
-        entry.nameTypeLabel?.let {
-            contentWidth += nameBadgePaint.measureText(it) + 20f * density
+        // Calculate popup width first (need it for gloss wrapping)
+        var contentWidth = 0f
+        entries.forEach { entry ->
+            contentWidth = maxOf(contentWidth, headwordPaint.measureText(entry.expression))
+            if (entry.reading.isNotEmpty() && entry.reading != entry.expression) {
+                contentWidth = maxOf(contentWidth, headwordPaint.measureText(entry.expression) + readingPaint.measureText(entry.reading) + 16f * density)
+            }
+            entry.glossary.forEach { gloss ->
+                val displayGloss = if (gloss.length > 50) gloss.take(50) + "…" else gloss
+                contentWidth = maxOf(contentWidth, glossPaint.measureText(displayGloss) + 24f * density)
+            }
         }
         if (showAnkiButton) {
             contentWidth += ankiButtonWidth + ankiButtonMargin
         }
-        reading?.let { contentWidth = maxOf(contentWidth, readingPaint.measureText(it)) }
-        // For width, still limit gloss measurement to avoid overly wide popups
-        glosses.forEach {
-            val displayGloss = if (it.length > 60) it.take(60) + "…" else it
-            contentWidth = maxOf(contentWidth, glossPaint.measureText(displayGloss) + 24f * density)
-        }
         val popupWidth = minOf(contentWidth + paddingH * 2, maxWidth)
 
-        // Calculate available width for wrapped gloss text
-        val glossNumberWidth = 20f * density  // Space for "1.", "2.", etc.
+        // Calculate gloss text width for wrapping
+        val glossNumberWidth = 20f * density
         val glossTextWidth = (popupWidth - paddingH * 2 - glossNumberWidth).toInt().coerceAtLeast(100)
-
-        // Create TextPaint for StaticLayout
         val glossTextPaintForLayout = TextPaint(glossPaint)
 
-        // Pre-calculate wrapped gloss layouts and their heights
-        val glossLayouts = glosses.map { gloss ->
-            StaticLayout.Builder.obtain(gloss, 0, gloss.length, glossTextPaintForLayout, glossTextWidth)
-                .setAlignment(Layout.Alignment.ALIGN_NORMAL)
-                .setLineSpacing(0f, 1f)
-                .setIncludePad(false)
-                .build()
+        // Calculate layouts and heights for each entry
+        val entryLayouts = entries.map { entry ->
+            val glossLayouts = entry.glossary.map { gloss ->
+                StaticLayout.Builder.obtain(gloss, 0, gloss.length, glossTextPaintForLayout, glossTextWidth)
+                    .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+                    .setLineSpacing(0f, 1f)
+                    .setIncludePad(false)
+                    .build()
+            }
+
+            var entryHeight = headwordPaint.textSize  // Headword
+            entryHeight += headwordPaint.textSize * 0.3f  // Space after headword
+            if (entry.reading.isNotEmpty() && entry.reading != entry.expression) {
+                entryHeight += readingPaint.textSize + 2f * density  // Reading
+            }
+            if (entry.deinflectionPath.isNotEmpty()) {
+                entryHeight += deinflectPaint.textSize + 8f * density  // Deinflection
+            }
+            if (glossLayouts.isNotEmpty()) {
+                entryHeight += 10f * density  // Gap before glosses
+                glossLayouts.forEach { layout ->
+                    entryHeight += layout.height + 4f * density
+                }
+            }
+            entryHeight += 8f * density  // Bottom padding
+
+            EntryLayout(entry, glossLayouts, entryHeight)
         }
 
-        // Calculate full content height (for scrolling)
-        // Must match actual Y positioning in rendering code below
-        var fullContentHeight = headwordPaint.textSize  // Headword
-        fullContentHeight += headwordPaint.textSize * 0.3f  // Extra space after headword
-        reading?.let { fullContentHeight += readingPaint.textSize + 2f * density }
-        deinflection?.let { fullContentHeight += deinflectPaint.textSize + 8f * density }
-        if (glossLayouts.isNotEmpty()) {
-            fullContentHeight += 14f * density  // Gap before glosses
-            glossLayouts.forEachIndexed { index, layout ->
-                fullContentHeight += layout.height + 4f * density  // Each wrapped gloss + spacing
+        // Calculate total content height
+        var totalContentHeight = 0f
+        entryLayouts.forEachIndexed { index, layout ->
+            totalContentHeight += layout.height
+            if (index < entryLayouts.size - 1) {
+                totalContentHeight += dividerHeight  // Divider between entries
             }
         }
+        popupContentHeight = totalContentHeight
 
-        // Calculate visible height (capped at maxHeight)
-        // Include sourceLabelSpace in popup height so content area isn't shrunk
-        val fullPopupHeight = fullContentHeight + paddingV * 2 + sourceLabelSpace
+        // Calculate popup height (constrained)
+        val fullPopupHeight = totalContentHeight + paddingV * 2
         val popupHeight = minOf(fullPopupHeight, maxHeight)
+        popupVisibleHeight = popupHeight - paddingV * 2
 
-        // Track heights for scrolling (account for source label space at bottom)
-        popupContentHeight = fullContentHeight
-        popupVisibleHeight = popupHeight - paddingV * 2 - sourceLabelSpace
-
-        // Position popup - prefer above cursor, fallback to below
+        // Position popup
         var finalX = popupX - popupWidth / 2
         var finalY = popupY - popupHeight - 20f * density
-
-        // Keep on screen
         finalX = finalX.coerceIn(8f, width - popupWidth - 8f)
         if (finalY < 8f) {
-            finalY = popupY + 40f * density  // Below cursor if no room above
+            finalY = popupY + 40f * density
         }
         finalY = finalY.coerceIn(8f, height - popupHeight - 8f)
 
-        // Store popup bounds for touch detection
         popupBounds = RectF(finalX, finalY, finalX + popupWidth, finalY + popupHeight)
 
-        // Apply popup alpha for fade animation
-        val alpha = popupAlpha
-
-        // Draw background with subtle shadow effect
+        // Draw background
         val shadowRect = RectF(finalX + 2f * density, finalY + 2f * density,
                                finalX + popupWidth + 2f * density, finalY + popupHeight + 2f * density)
         val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -452,213 +451,214 @@ class OverlayTextView(
 
         val bgPaint = Paint(popupBgPaint).apply { this.alpha = (250 * alpha).toInt() }
         val borderPaint = Paint(popupBorderPaint).apply { this.alpha = (60 * alpha).toInt() }
-
         val rect = RectF(finalX, finalY, finalX + popupWidth, finalY + popupHeight)
         canvas.drawRoundRect(rect, cornerRadius, cornerRadius, bgPaint)
         canvas.drawRoundRect(rect, cornerRadius, cornerRadius, borderPaint)
 
-        // Draw Anki export button (top-right corner) - outside clip region
-        if (showAnkiButton) {
-            val buttonX = finalX + popupWidth - ankiButtonWidth - ankiButtonMargin
-            val buttonY = finalY + ankiButtonMargin
-            val buttonRect = RectF(buttonX, buttonY, buttonX + ankiButtonWidth, buttonY + ankiButtonHeight)
-            ankiButtonBounds = buttonRect
+        // Clip content area for scrolling
+        canvas.save()
+        canvas.clipRect(finalX, finalY + paddingV, finalX + popupWidth, finalY + popupHeight - paddingV)
 
-            val buttonRadius = 6f * density
+        // Clear Anki button bounds list
+        ankiButtonBoundsList.clear()
 
-            when (ankiButtonState) {
-                AnkiButtonState.IDLE -> {
-                    // Blue button with Anki icon
-                    val buttonPaint = Paint(ankiButtonPaint).apply { this.alpha = (200 * alpha).toInt() }
-                    canvas.drawRoundRect(buttonRect, buttonRadius, buttonRadius, buttonPaint)
-
-                    // Draw Anki icon
-                    ankiIcon?.let { icon ->
-                        val iconSize = (18 * density).toInt()
-                        val iconLeft = (buttonX + (ankiButtonWidth - iconSize) / 2).toInt()
-                        val iconTop = (buttonY + (ankiButtonHeight - iconSize) / 2).toInt()
-                        icon.setBounds(iconLeft, iconTop, iconLeft + iconSize, iconTop + iconSize)
-                        icon.alpha = (255 * alpha).toInt()
-                        icon.draw(canvas)
-                    }
-                }
-
-                AnkiButtonState.LOADING -> {
-                    // Blue button with spinning indicator
-                    val buttonPaint = Paint(ankiButtonPaint).apply { this.alpha = (180 * alpha).toInt() }
-                    canvas.drawRoundRect(buttonRect, buttonRadius, buttonRadius, buttonPaint)
-
-                    // Draw spinning arc
-                    val arcPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                        color = Color.WHITE
-                        style = Paint.Style.STROKE
-                        strokeWidth = 2f * density
-                        this.alpha = (255 * alpha).toInt()
-                    }
-                    val arcSize = 14f * density
-                    val arcRect = RectF(
-                        buttonX + (ankiButtonWidth - arcSize) / 2,
-                        buttonY + (ankiButtonHeight - arcSize) / 2,
-                        buttonX + (ankiButtonWidth + arcSize) / 2,
-                        buttonY + (ankiButtonHeight + arcSize) / 2
-                    )
-                    canvas.drawArc(arcRect, loadingAngle, 270f, false, arcPaint)
-                }
-
-                AnkiButtonState.SUCCESS, AnkiButtonState.ALREADY -> {
-                    // Green button with checkmark
-                    val buttonPaint = Paint(ankiButtonSuccessPaint).apply { this.alpha = (200 * alpha).toInt() }
-                    canvas.drawRoundRect(buttonRect, buttonRadius, buttonRadius, buttonPaint)
-
-                    // Draw checkmark
-                    val checkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                        color = Color.WHITE
-                        style = Paint.Style.STROKE
-                        strokeWidth = 2.5f * density
-                        strokeCap = Paint.Cap.ROUND
-                        strokeJoin = Paint.Join.ROUND
-                        this.alpha = (255 * alpha).toInt()
-                    }
-                    val cx = buttonX + ankiButtonWidth / 2
-                    val cy = buttonY + ankiButtonHeight / 2
-                    val checkSize = 6f * density
-                    val path = Path().apply {
-                        moveTo(cx - checkSize, cy)
-                        lineTo(cx - checkSize / 3, cy + checkSize * 0.7f)
-                        lineTo(cx + checkSize, cy - checkSize * 0.6f)
-                    }
-                    canvas.drawPath(path, checkPaint)
-                }
-            }
-        } else {
-            ankiButtonBounds = null
-        }
-
-        // Draw content with alpha - use clipping for scrollable content
+        // Draw each entry
         val headPaint = Paint(headwordPaint).apply { this.alpha = (255 * alpha).toInt() }
         val readPaint = Paint(readingPaint).apply { this.alpha = (180 * alpha).toInt() }
         val deinPaint = Paint(deinflectPaint).apply { this.alpha = (150 * alpha).toInt() }
-        val glossTextPaint = Paint(glossPaint).apply { this.alpha = (230 * alpha).toInt() }
         val glossNumPaint = Paint(glossNumberPaint).apply { this.alpha = (120 * alpha).toInt() }
-
-        // Save canvas state and apply clipping for scrollable content
-        // Leave room at bottom for source label
-        canvas.save()
-        canvas.clipRect(finalX, finalY + paddingV, finalX + popupWidth, finalY + popupHeight - paddingV - sourceLabelSpace)
-
-        var y = finalY + paddingV + headwordPaint.textSize * 0.85f - popupScrollY
-
-        // Headword
-        canvas.drawText(headword, finalX + paddingH, y, headPaint)
-        var badgeX = finalX + paddingH + headwordPaint.measureText(headword) + 8f * density
-        // Calculate max badge position to avoid overlapping Anki button
-        val maxBadgeX = if (showAnkiButton) {
-            finalX + popupWidth - ankiButtonWidth - ankiButtonMargin - 8f * density
-        } else {
-            finalX + popupWidth - paddingH
+        val dividerPaint = Paint().apply {
+            color = Color.argb((30 * alpha).toInt(), 255, 255, 255)
+            strokeWidth = 1f * density
         }
 
-        // Draw frequency badge (green pill) next to headword (only if it fits)
-        entry.frequencyBadge?.let { badge ->
-            val badgePadH = 6f * density
-            val badgePadV = 2f * density
-            val badgeWidth = frequencyBadgePaint.measureText(badge) + badgePadH * 2
-            val badgeHeight = frequencyBadgePaint.textSize + badgePadV * 2
+        var currentY = finalY + paddingV - popupScrollY
 
-            // Only draw if badge fits before Anki button
-            if (badgeX + badgeWidth <= maxBadgeX) {
-                val badgeY = y - headwordPaint.textSize + (headwordPaint.textSize - badgeHeight) / 2
+        entryLayouts.forEachIndexed { index, entryLayout ->
+            val entry = entryLayout.entry
+            val entryStartY = currentY
 
-                // Draw badge background
-                val freqBgPaint = Paint(frequencyBadgeBgPaint).apply { this.alpha = (alpha * 255).toInt() }
-                val badgeRect = RectF(badgeX, badgeY, badgeX + badgeWidth, badgeY + badgeHeight)
-                canvas.drawRoundRect(badgeRect, badgeHeight / 2, badgeHeight / 2, freqBgPaint)
+            // Skip if completely outside visible area
+            if (currentY + entryLayout.height < finalY + paddingV - 50f * density ||
+                currentY > finalY + popupHeight + 50f * density) {
+                ankiButtonBoundsList.add(RectF())
+                currentY += entryLayout.height
+                if (index < entryLayouts.size - 1) currentY += dividerHeight
+                return@forEachIndexed
+            }
 
-                // Draw badge text
-                val freqTextPaint = Paint(frequencyBadgePaint).apply { this.alpha = (alpha * 255).toInt() }
-                canvas.drawText(badge, badgeX + badgePadH, badgeY + badgeHeight - badgePadV - 1f * density, freqTextPaint)
-                badgeX += badgeWidth + 6f * density
+            // Draw Anki button (top-right of this entry)
+            if (showAnkiButton) {
+                val buttonX = finalX + popupWidth - ankiButtonWidth - ankiButtonMargin
+                val buttonY = currentY + ankiButtonMargin
+                val buttonRect = RectF(buttonX, buttonY, buttonX + ankiButtonWidth, buttonY + ankiButtonHeight)
+                ankiButtonBoundsList.add(buttonRect)
+
+                val buttonRadius = 6f * density
+                val state = ankiButtonStates[index] ?: AnkiButtonState.IDLE
+
+                when (state) {
+                    AnkiButtonState.IDLE -> {
+                        val buttonPaint = Paint(ankiButtonPaint).apply { this.alpha = (200 * alpha).toInt() }
+                        canvas.drawRoundRect(buttonRect, buttonRadius, buttonRadius, buttonPaint)
+                        ankiIcon?.let { icon ->
+                            val iconSize = (18 * density).toInt()
+                            val iconLeft = (buttonX + (ankiButtonWidth - iconSize) / 2).toInt()
+                            val iconTop = (buttonY + (ankiButtonHeight - iconSize) / 2).toInt()
+                            icon.setBounds(iconLeft, iconTop, iconLeft + iconSize, iconTop + iconSize)
+                            icon.alpha = (255 * alpha).toInt()
+                            icon.draw(canvas)
+                        }
+                    }
+                    AnkiButtonState.LOADING -> {
+                        val buttonPaint = Paint(ankiButtonPaint).apply { this.alpha = (180 * alpha).toInt() }
+                        canvas.drawRoundRect(buttonRect, buttonRadius, buttonRadius, buttonPaint)
+                        val arcPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            color = Color.WHITE
+                            style = Paint.Style.STROKE
+                            strokeWidth = 2f * density
+                            this.alpha = (255 * alpha).toInt()
+                        }
+                        val arcSize = 14f * density
+                        val arcRect = RectF(
+                            buttonX + (ankiButtonWidth - arcSize) / 2,
+                            buttonY + (ankiButtonHeight - arcSize) / 2,
+                            buttonX + (ankiButtonWidth + arcSize) / 2,
+                            buttonY + (ankiButtonHeight + arcSize) / 2
+                        )
+                        canvas.drawArc(arcRect, loadingAngle, 270f, false, arcPaint)
+                    }
+                    AnkiButtonState.SUCCESS, AnkiButtonState.ALREADY -> {
+                        val buttonPaint = Paint(ankiButtonSuccessPaint).apply { this.alpha = (200 * alpha).toInt() }
+                        canvas.drawRoundRect(buttonRect, buttonRadius, buttonRadius, buttonPaint)
+                        val checkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            color = Color.WHITE
+                            style = Paint.Style.STROKE
+                            strokeWidth = 2.5f * density
+                            strokeCap = Paint.Cap.ROUND
+                            this.alpha = (255 * alpha).toInt()
+                        }
+                        val cx = buttonX + ankiButtonWidth / 2
+                        val cy = buttonY + ankiButtonHeight / 2
+                        val checkSize = 6f * density
+                        val path = Path().apply {
+                            moveTo(cx - checkSize, cy)
+                            lineTo(cx - checkSize / 3, cy + checkSize * 0.7f)
+                            lineTo(cx + checkSize, cy - checkSize * 0.6f)
+                        }
+                        canvas.drawPath(path, checkPaint)
+                    }
+                }
+            } else {
+                ankiButtonBoundsList.add(RectF())
+            }
+
+            // Calculate max width for content (leave room for Anki button)
+            val maxContentX = if (showAnkiButton) {
+                finalX + popupWidth - ankiButtonWidth - ankiButtonMargin - 8f * density
+            } else {
+                finalX + popupWidth - paddingH
+            }
+
+            var y = currentY + headwordPaint.textSize * 0.85f
+
+            // Draw headword
+            canvas.drawText(entry.expression, finalX + paddingH, y, headPaint)
+            var badgeX = finalX + paddingH + headwordPaint.measureText(entry.expression) + 8f * density
+
+            // Draw frequency badge
+            entry.frequencyBadge?.let { badge ->
+                val badgePadH = 6f * density
+                val badgePadV = 2f * density
+                val badgeWidth = frequencyBadgePaint.measureText(badge) + badgePadH * 2
+                val badgeHeight = frequencyBadgePaint.textSize + badgePadV * 2
+
+                if (badgeX + badgeWidth <= maxContentX) {
+                    val badgeY = y - headwordPaint.textSize + (headwordPaint.textSize - badgeHeight) / 2
+                    val freqBgPaint = Paint(frequencyBadgeBgPaint).apply { this.alpha = (alpha * 255).toInt() }
+                    val badgeRect = RectF(badgeX, badgeY, badgeX + badgeWidth, badgeY + badgeHeight)
+                    canvas.drawRoundRect(badgeRect, badgeHeight / 2, badgeHeight / 2, freqBgPaint)
+                    val freqTextPaint = Paint(frequencyBadgePaint).apply { this.alpha = (alpha * 255).toInt() }
+                    canvas.drawText(badge, badgeX + badgePadH, badgeY + badgeHeight - badgePadV - 1f * density, freqTextPaint)
+                    badgeX += badgeWidth + 6f * density
+                }
+            }
+
+            // Draw name type badge
+            entry.nameTypeLabel?.let { label ->
+                val badgePadH = 6f * density
+                val badgePadV = 2f * density
+                val badgeWidth = nameBadgePaint.measureText(label) + badgePadH * 2
+                val badgeHeight = nameBadgePaint.textSize + badgePadV * 2
+
+                if (badgeX + badgeWidth <= maxContentX) {
+                    val badgeY = y - headwordPaint.textSize + (headwordPaint.textSize - badgeHeight) / 2
+                    val nameBgPaint = Paint(nameBadgeBgPaint).apply { this.alpha = (alpha * 255).toInt() }
+                    val badgeRect = RectF(badgeX, badgeY, badgeX + badgeWidth, badgeY + badgeHeight)
+                    canvas.drawRoundRect(badgeRect, badgeHeight / 2, badgeHeight / 2, nameBgPaint)
+                    val nameTextPaint = Paint(nameBadgePaint).apply { this.alpha = (alpha * 255).toInt() }
+                    canvas.drawText(label, badgeX + badgePadH, badgeY + badgeHeight - badgePadV - 1f * density, nameTextPaint)
+                }
+            }
+
+            y += headwordPaint.textSize * 0.3f
+
+            // Draw reading (if different from expression)
+            if (entry.reading.isNotEmpty() && entry.reading != entry.expression) {
+                y += readingPaint.textSize + 2f * density
+                canvas.drawText(entry.reading, finalX + paddingH, y, readPaint)
+            }
+
+            // Draw deinflection path
+            if (entry.deinflectionPath.isNotEmpty()) {
+                y += deinflectPaint.textSize + 8f * density
+                canvas.drawText("→ ${entry.deinflectionPath}", finalX + paddingH, y, deinPaint)
+            }
+
+            // Draw glossary
+            if (entryLayout.glossLayouts.isNotEmpty()) {
+                y += 10f * density
+                entryLayout.glossLayouts.forEachIndexed { glossIndex, layout ->
+                    y += 4f * density
+                    val numText = "${glossIndex + 1}."
+                    canvas.drawText(numText, finalX + paddingH, y + glossPaint.textSize * 0.85f, glossNumPaint)
+                    canvas.save()
+                    canvas.translate(finalX + paddingH + glossNumberWidth, y)
+                    layout.draw(canvas)
+                    canvas.restore()
+                    y += layout.height
+                }
+            }
+
+            // Draw source label
+            val srcLabelPaint = Paint(sourceLabelPaint).apply { this.alpha = (alpha * 255).toInt() }
+            val sourceLabel = entry.sourceLabel
+            val labelWidth = sourceLabelPaint.measureText(sourceLabel)
+            canvas.drawText(sourceLabel, maxContentX - labelWidth, currentY + entryLayout.height - 4f * density, srcLabelPaint)
+
+            currentY += entryLayout.height
+
+            // Draw divider (if not last entry)
+            if (index < entryLayouts.size - 1) {
+                val dividerY = currentY + dividerHeight / 2
+                canvas.drawLine(finalX + paddingH, dividerY, finalX + popupWidth - paddingH, dividerY, dividerPaint)
+                currentY += dividerHeight
             }
         }
 
-        // Draw name type badge (orange pill) for JMnedict entries (only if it fits)
-        entry.nameTypeLabel?.let { label ->
-            val badgePadH = 6f * density
-            val badgePadV = 2f * density
-            val badgeWidth = nameBadgePaint.measureText(label) + badgePadH * 2
-            val badgeHeight = nameBadgePaint.textSize + badgePadV * 2
-
-            // Only draw if badge fits before Anki button
-            if (badgeX + badgeWidth <= maxBadgeX) {
-                val badgeY = y - headwordPaint.textSize + (headwordPaint.textSize - badgeHeight) / 2
-
-                // Draw badge background
-                val nameBgPaint = Paint(nameBadgeBgPaint).apply { this.alpha = (alpha * 255).toInt() }
-                val badgeRect = RectF(badgeX, badgeY, badgeX + badgeWidth, badgeY + badgeHeight)
-                canvas.drawRoundRect(badgeRect, badgeHeight / 2, badgeHeight / 2, nameBgPaint)
-
-                // Draw badge text
-                val nameTextPaint = Paint(nameBadgePaint).apply { this.alpha = (alpha * 255).toInt() }
-                canvas.drawText(label, badgeX + badgePadH, badgeY + badgeHeight - badgePadV - 1f * density, nameTextPaint)
-            }
-        }
-
-        y += headwordPaint.textSize * 0.3f
-
-        // Reading (if different from headword)
-        reading?.let {
-            y += readingPaint.textSize + 2f * density
-            canvas.drawText(it, finalX + paddingH, y, readPaint)
-        }
-
-        // Deinflection path
-        deinflection?.let {
-            y += deinflectPaint.textSize + 8f * density
-            canvas.drawText(it, finalX + paddingH, y, deinPaint)
-        }
-
-        // Glossary - show all entries with text wrapping
-        if (glossLayouts.isNotEmpty()) {
-            y += 14f * density
-            glossLayouts.forEachIndexed { index, layout ->
-                y += 4f * density  // Spacing before each entry
-                // Draw number aligned with first line of wrapped text
-                val numText = "${index + 1}."
-                canvas.drawText(numText, finalX + paddingH, y + glossPaint.textSize * 0.85f, glossNumPaint)
-                // Draw wrapped gloss text using StaticLayout
-                canvas.save()
-                canvas.translate(finalX + paddingH + glossNumberWidth, y)
-                layout.draw(canvas)
-                canvas.restore()
-                y += layout.height  // Move past the wrapped text
-            }
-        }
-
-        // Restore canvas state
         canvas.restore()
-
-        // Draw source label at bottom-right of popup (outside clip region)
-        val srcLabelPaint = Paint(sourceLabelPaint).apply { this.alpha = (alpha * 255).toInt() }
-        val sourceLabel = entry.sourceLabel
-        val labelWidth = sourceLabelPaint.measureText(sourceLabel)
-        canvas.drawText(
-            sourceLabel,
-            finalX + popupWidth - paddingH - labelWidth,
-            finalY + popupHeight - 6f * density,
-            srcLabelPaint
-        )
 
         // Draw scroll indicator if content overflows
         if (popupContentHeight > popupVisibleHeight) {
             val scrollBarWidth = 3f * density
             val scrollBarMargin = 4f * density
             val scrollableRange = popupContentHeight - popupVisibleHeight
-            val scrollBarHeight = (popupVisibleHeight / popupContentHeight) * (popupHeight - paddingV * 2)
+            val visibleRatio = popupVisibleHeight / popupContentHeight
+            val scrollBarHeight = visibleRatio * (popupHeight - paddingV * 2)
             val scrollBarY = finalY + paddingV + (popupScrollY / scrollableRange) * (popupHeight - paddingV * 2 - scrollBarHeight)
 
             val scrollBarPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.argb((80 * alpha).toInt(), 255, 255, 255)
-                style = Paint.Style.FILL
             }
             val scrollBarRect = RectF(
                 finalX + popupWidth - scrollBarWidth - scrollBarMargin,
@@ -706,13 +706,15 @@ class OverlayTextView(
                     return true
                 }
 
-                // Check if tap is on Anki export button
-                ankiButtonBounds?.let { bounds ->
-                    if (bounds.contains(x, y) && currentDefinition != null) {
-                        // Only allow tap if in IDLE state
-                        if (ankiButtonState == AnkiButtonState.IDLE) {
+                // Check if tap is on any per-row Anki export button
+                for ((index, bounds) in ankiButtonBoundsList.withIndex()) {
+                    if (bounds.contains(x, y) && index < currentDefinitions.size) {
+                        val state = ankiButtonStates[index] ?: AnkiButtonState.IDLE
+                        if (state == AnkiButtonState.IDLE) {
+                            val entry = currentDefinitions[index]
                             val sentence = selectedResult?.text ?: ""
-                            onAnkiExport?.invoke(currentDefinition!!, sentence)
+                            selectedDefinitionIndex = index  // Track which one is exporting
+                            onAnkiExport?.invoke(entry, sentence)
                         }
                         return true
                     }
@@ -731,7 +733,8 @@ class OverlayTextView(
                         val charIndex = getCharIndexAt(result, x, y)
                         if (charIndex >= 0) {
                             // Clear any existing popup before new lookup
-                            currentDefinition = null
+                            currentDefinitions = emptyList()
+                            selectedDefinitionIndex = 0
                             showingNoResults = false
                             popupScrollY = 0f  // Reset scroll for new popup
 
@@ -751,13 +754,16 @@ class OverlayTextView(
 
                 // Tap is outside text regions
                 // If showing popup/no-results, close it first
-                if (currentDefinition != null || showingNoResults) {
-                    currentDefinition = null
+                if (currentDefinitions.isNotEmpty() || showingNoResults) {
+                    currentDefinitions = emptyList()
+                    selectedDefinitionIndex = 0
                     showingNoResults = false
                     selectedResult = null
                     selectedCharIndex = -1
                     popupScrollY = 0f
                     popupBounds = null  // Clear bounds so subsequent taps aren't blocked
+                    ankiButtonBoundsList.clear()
+                    ankiButtonStates.clear()
                     invalidate()
                     return true
                 }
@@ -835,17 +841,26 @@ class OverlayTextView(
     }
 
     fun showDefinition(entry: DictionaryEntry, charIndex: Int) {
+        showDefinitions(listOf(entry), charIndex)
+    }
+
+    /**
+     * Show multiple dictionary definitions with navigation support.
+     */
+    fun showDefinitions(entries: List<DictionaryEntry>, charIndex: Int) {
         // Save previous entry to history if it was open for 1+ second
         maybeSaveToHistory()
 
         showingNoResults = false
-        currentDefinition = entry
-        selectedMatchLength = entry.matchedText.length
+        currentDefinitions = entries
+        selectedDefinitionIndex = 0
+        selectedMatchLength = entries.firstOrNull()?.matchedText?.length ?: 1
         resetAnkiButtonState()
+        popupScrollY = 0f  // Reset scroll for new popup
 
         // Track popup open time and entry for history
         popupOpenTime = System.currentTimeMillis()
-        lastShownEntry = entry
+        lastShownEntry = currentDefinition
         lastShownSentence = selectedResult?.text ?: ""
 
         animatePopupIn()
@@ -856,17 +871,32 @@ class OverlayTextView(
      * Positions popup above the selected text, not the cursor.
      */
     fun showDefinitionAtCursor(entry: DictionaryEntry, cursorX: Float, cursorY: Float) {
+        showDefinitionsAtCursor(listOf(entry), cursorX, cursorY)
+    }
+
+    fun showDefinitionsAtCursor(entries: List<DictionaryEntry>, cursorX: Float, cursorY: Float) {
+        if (entries.isEmpty()) {
+            hideDefinition()
+            return
+        }
+
+        // Skip if already showing these exact entries (reduces redraws during cursor movement)
+        if (currentDefinitions == entries && popupAlpha >= 1f) {
+            return
+        }
+
         // Save previous entry to history if it was open for 1+ second
         maybeSaveToHistory()
 
         showingNoResults = false
-        currentDefinition = entry
-        selectedMatchLength = entry.matchedText.length
+        currentDefinitions = entries
+        selectedDefinitionIndex = 0
+        selectedMatchLength = entries.first().matchedText.length
         resetAnkiButtonState()
 
         // Track popup open time and entry for history
         popupOpenTime = System.currentTimeMillis()
-        lastShownEntry = entry
+        lastShownEntry = currentDefinition
         lastShownSentence = selectedResult?.text ?: ""
 
         // Position popup above the selected text, centered over all matched characters
@@ -890,7 +920,8 @@ class OverlayTextView(
     }
 
     fun showNoResults() {
-        currentDefinition = null
+        currentDefinitions = emptyList()
+        selectedDefinitionIndex = 0
         showingNoResults = true
         selectedMatchLength = 1
         animatePopupIn()
@@ -901,7 +932,8 @@ class OverlayTextView(
         maybeSaveToHistory()
 
         animatePopupOut {
-            currentDefinition = null
+            currentDefinitions = emptyList()
+            selectedDefinitionIndex = 0
             showingNoResults = false
             selectedResult = null
             selectedCharIndex = -1
@@ -963,6 +995,9 @@ class OverlayTextView(
         val mappings = context.getCharMappingsInRange(unifiedStartIndex, matchLength)
         if (mappings.isEmpty()) return
 
+        // Skip if highlight hasn't changed (reduces redraws during cursor movement)
+        if (crossLineHighlight == mappings) return
+
         // Store cross-line highlight info
         crossLineHighlight = mappings
 
@@ -977,16 +1012,16 @@ class OverlayTextView(
     }
 
     /**
-     * Show definition with unified match info for cross-line highlighting.
+     * Show definitions with unified match info for cross-line highlighting.
      * Positions popup and sets up highlighting across OcrResult boundaries.
      *
-     * @param entry The dictionary entry to display
+     * @param entries List of dictionary entries to display (with navigation)
      * @param unifiedStartIndex Starting index in the unified text string
      * @param matchLength Number of characters in the match
      * @param context The unified OCR context
      */
-    fun showDefinitionWithUnifiedMatch(
-        entry: DictionaryEntry,
+    fun showDefinitionsWithUnifiedMatch(
+        entries: List<DictionaryEntry>,
         unifiedStartIndex: Int,
         matchLength: Int,
         context: UnifiedOcrContext
@@ -998,12 +1033,14 @@ class OverlayTextView(
         setHighlightFromUnified(context, unifiedStartIndex, matchLength)
 
         showingNoResults = false
-        currentDefinition = entry
+        currentDefinitions = entries
+        selectedDefinitionIndex = 0
         resetAnkiButtonState()
+        popupScrollY = 0f
 
         // Track popup open time and entry for history
         popupOpenTime = System.currentTimeMillis()
-        lastShownEntry = entry
+        lastShownEntry = currentDefinition
         lastShownSentence = selectedResult?.text ?: ""
 
         // Position popup above the first character of the match
@@ -1020,6 +1057,16 @@ class OverlayTextView(
         animatePopupIn()
     }
 
+    // Keep old method for compatibility
+    fun showDefinitionWithUnifiedMatch(
+        entry: DictionaryEntry,
+        unifiedStartIndex: Int,
+        matchLength: Int,
+        context: UnifiedOcrContext
+    ) {
+        showDefinitionsWithUnifiedMatch(listOf(entry), unifiedStartIndex, matchLength, context)
+    }
+
     /**
      * Clear the current highlight.
      */
@@ -1028,7 +1075,8 @@ class OverlayTextView(
         selectedCharIndex = -1
         selectedMatchLength = 1
         crossLineHighlight = null  // Clear cross-line highlight
-        currentDefinition = null
+        currentDefinitions = emptyList()
+        selectedDefinitionIndex = 0
         showingNoResults = false
         invalidate()
     }
@@ -1093,9 +1141,11 @@ class OverlayTextView(
 
     /**
      * Set the Anki button to loading state with spinning animation.
+     * Uses selectedDefinitionIndex to know which entry's button to update.
      */
     fun setAnkiButtonLoading() {
-        ankiButtonState = AnkiButtonState.LOADING
+        loadingEntryIndex = selectedDefinitionIndex
+        ankiButtonStates[selectedDefinitionIndex] = AnkiButtonState.LOADING
         startLoadingAnimation()
         invalidate()
     }
@@ -1105,7 +1155,9 @@ class OverlayTextView(
      */
     fun setAnkiButtonSuccess() {
         stopLoadingAnimation()
-        ankiButtonState = AnkiButtonState.SUCCESS
+        if (loadingEntryIndex >= 0) {
+            ankiButtonStates[loadingEntryIndex] = AnkiButtonState.SUCCESS
+        }
         invalidate()
     }
 
@@ -1114,16 +1166,19 @@ class OverlayTextView(
      */
     fun setAnkiButtonAlreadyExported() {
         stopLoadingAnimation()
-        ankiButtonState = AnkiButtonState.ALREADY
+        if (loadingEntryIndex >= 0) {
+            ankiButtonStates[loadingEntryIndex] = AnkiButtonState.ALREADY
+        }
         invalidate()
     }
 
     /**
-     * Reset the Anki button to idle state.
+     * Reset all Anki button states to idle.
      */
     fun resetAnkiButtonState() {
         stopLoadingAnimation()
-        ankiButtonState = AnkiButtonState.IDLE
+        ankiButtonStates.clear()
+        loadingEntryIndex = -1
         invalidate()
     }
 

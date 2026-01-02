@@ -17,3 +17,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "Yomidroid"
 include(":app")
+include(":OcrLibrary")
