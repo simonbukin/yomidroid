@@ -42,6 +42,16 @@ android {
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.5"
     }
+
+    packaging {
+        resources {
+            excludes += listOf(
+                "META-INF/CONTRIBUTORS.md",
+                "META-INF/LICENSE.md",
+                "META-INF/NOTICE.md"
+            )
+        }
+    }
 }
 
 dependencies {
@@ -74,6 +84,9 @@ dependencies {
 
     // JSON parsing
     implementation("com.google.code.gson:gson:2.10.1")
+
+    // Kuromoji Japanese morphological analyzer (for Grammar Analyzer)
+    implementation("com.atilika.kuromoji:kuromoji-ipadic:0.9.0")
 
     // Navigation
     implementation("androidx.navigation:navigation-compose:2.7.5")

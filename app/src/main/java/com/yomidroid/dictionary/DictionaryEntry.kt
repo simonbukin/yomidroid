@@ -96,3 +96,16 @@ data class DictionaryEntry(
         }
     }
 }
+
+/**
+ * A dictionary entry with position information from text scanning.
+ */
+data class DictionaryEntryWithPosition(
+    val entry: DictionaryEntry,
+    val startIndex: Int,
+    val endIndex: Int
+) {
+    val matchedText: String get() = entry.matchedText
+    val expression: String get() = entry.expression
+    val reading: String get() = entry.reading
+}

@@ -34,6 +34,7 @@ import com.yomidroid.config.ColorConfig
 import com.yomidroid.config.ColorConfigManager
 import com.yomidroid.dictionary.DictionaryEngine
 import com.yomidroid.ocr.OcrResult
+import com.yomidroid.ocr.OcrResultRepository
 
 class YomidroidAccessibilityService : AccessibilityService() {
 
@@ -473,6 +474,9 @@ class YomidroidAccessibilityService : AccessibilityService() {
 
         // Store results for cursor-based lookup
         currentOcrResults = results
+
+        // Share OCR results with repository for Grammar Analyzer
+        OcrResultRepository.updateOcrResults(results)
 
         // Store clean screenshot for Anki export
         currentScreenshot = screenshot

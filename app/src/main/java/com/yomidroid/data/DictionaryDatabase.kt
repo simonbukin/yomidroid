@@ -22,6 +22,18 @@ class Converters {
     }
 }
 
+@Entity(tableName = "grammar_sentences")
+data class GrammarSentenceEntity(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0,
+
+    @ColumnInfo(name = "sentence")
+    val sentence: String,
+
+    @ColumnInfo(name = "timestamp")
+    val timestamp: Long = System.currentTimeMillis()
+)
+
 @Entity(tableName = "lookup_history")
 data class LookupHistoryEntity(
     @PrimaryKey(autoGenerate = true)
@@ -79,18 +91,43 @@ interface LookupHistoryDao {
     suspend fun search(query: String): List<LookupHistoryEntity>
 }
 
+@Dao
+interface GrammarSentenceDao {
+    @Query("SELECT * FROM grammar_sentences ORDER BY timestamp DESC")
+    suspend fun getAll(): List<GrammarSentenceEntity>
+
+    @Query("SELECT * FROM grammar_sentences ORDER BY timestamp DESC LIMIT :limit")
+    suspend fun getRecent(limit: Int): List<GrammarSentenceEntity>
+
+    @Query("SELECT * FROM grammar_sentences ORDER BY timestamp DESC LIMIT 1")
+    suspend fun getMostRecent(): GrammarSentenceEntity?
+
+    @Insert
+    suspend fun insert(sentence: GrammarSentenceEntity): Long
+
+    @Query("DELETE FROM grammar_sentences WHERE id = :id")
+    suspend fun delete(id: Long)
+
+    @Query("DELETE FROM grammar_sentences")
+    suspend fun deleteAll()
+
+    @Query("SELECT COUNT(*) FROM grammar_sentences WHERE sentence = :sentence")
+    suspend fun countBySentence(sentence: String): Int
+}
+
 /**
- * Room database for app-managed data (history only).
+ * Room database for app-managed data (history and grammar sentences).
  * The dictionary is stored separately in DictionaryDb.
  */
 @Database(
-    entities = [LookupHistoryEntity::class],
-    version = 2,
+    entities = [LookupHistoryEntity::class, GrammarSentenceEntity::class],
+    version = 3,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun historyDao(): LookupHistoryDao
+    abstract fun grammarSentenceDao(): GrammarSentenceDao
 
     companion object {
         @Volatile
@@ -102,6 +139,18 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_2_3 = object : androidx.room.migration.Migration(2, 3) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS grammar_sentences (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        sentence TEXT NOT NULL,
+                        timestamp INTEGER NOT NULL
+                    )
+                """)
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -109,7 +158,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "yomidroid_history.db"
                 )
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     .build()
                 INSTANCE = instance
                 instance

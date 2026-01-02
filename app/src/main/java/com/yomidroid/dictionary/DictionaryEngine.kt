@@ -80,6 +80,60 @@ class DictionaryEngine(context: Context) {
     }
 
     /**
+     * Scan the entire text for dictionary matches using longest-match.
+     * Returns all unique entries found, in order of appearance.
+     *
+     * @param text The full text to scan
+     * @return List of DictionaryEntry with position info
+     */
+    fun findAllMatches(text: String): List<DictionaryEntryWithPosition> {
+        val matches = mutableListOf<DictionaryEntryWithPosition>()
+        val seen = mutableSetOf<String>() // Track seen expressions to avoid duplicates
+        var i = 0
+
+        while (i < text.length) {
+            // Skip whitespace and punctuation
+            val char = text[i]
+            if (char.isWhitespace() || char in "。、！？「」『』（）…・") {
+                i++
+                continue
+            }
+
+            // Try to find a match starting at this position
+            val entries = findTerms(text, i)
+            val bestEntry = entries.firstOrNull()
+
+            if (bestEntry != null && bestEntry.matchedText.isNotEmpty()) {
+                val key = "${bestEntry.expression}|${bestEntry.reading}"
+                if (key !in seen) {
+                    seen.add(key)
+                    matches.add(
+                        DictionaryEntryWithPosition(
+                            entry = bestEntry,
+                            startIndex = i,
+                            endIndex = i + bestEntry.matchedText.length
+                        )
+                    )
+                }
+                // Skip past the matched text
+                i += bestEntry.matchedText.length
+            } else {
+                // No match, move forward one character
+                i++
+            }
+        }
+
+        return matches
+    }
+
+    /**
+     * Async version of findAllMatches
+     */
+    suspend fun findAllMatchesAsync(text: String): List<DictionaryEntryWithPosition> = withContext(Dispatchers.IO) {
+        findAllMatches(text)
+    }
+
+    /**
      * Find exact match for a term (no deinflection)
      */
     suspend fun findExact(term: String): List<DictionaryEntry> = withContext(Dispatchers.IO) {

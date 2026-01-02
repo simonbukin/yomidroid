@@ -33,11 +33,15 @@ import com.yomidroid.ui.history.HistoryDetailScreen
 import com.yomidroid.ui.history.HistoryScreen
 import com.yomidroid.ui.settings.SettingsScreen
 import com.yomidroid.ui.theme.YomidroidTheme
+import com.yomidroid.ui.tools.GrammarAnalyzerScreen
+import com.yomidroid.ui.tools.ToolsScreen
 
 sealed class Screen(val route: String) {
     object Home : Screen("home")
     object History : Screen("history")
     data class HistoryDetail(val id: Long) : Screen("history_detail")
+    object Tools : Screen("tools")
+    object GrammarAnalyzer : Screen("grammar_analyzer")
     object Settings : Screen("settings")
     object AnkiSettings : Screen("anki_settings")
     object ColorSettings : Screen("color_settings")
@@ -73,6 +77,9 @@ class MainActivity : ComponentActivity() {
                     }
                     Screen.ColorSettings -> {
                         ColorSettingsScreen(onBack = { currentScreen = Screen.Settings })
+                    }
+                    Screen.GrammarAnalyzer -> {
+                        GrammarAnalyzerScreen(onBack = { currentScreen = Screen.Tools })
                     }
                     is Screen.HistoryDetail -> {
                         val detailScreen = currentScreen as Screen.HistoryDetail
@@ -131,6 +138,17 @@ fun MainAppContent(
                     label = { Text("History") }
                 )
                 NavigationBarItem(
+                    selected = currentScreen == Screen.Tools,
+                    onClick = { onNavigate(Screen.Tools) },
+                    icon = {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_tools),
+                            contentDescription = "Tools"
+                        )
+                    },
+                    label = { Text("Tools") }
+                )
+                NavigationBarItem(
                     selected = currentScreen == Screen.Settings,
                     onClick = { onNavigate(Screen.Settings) },
                     icon = {
@@ -149,6 +167,9 @@ fun MainAppContent(
                 Screen.Home -> HomeScreen(onOpenAccessibilitySettings = onOpenAccessibilitySettings)
                 Screen.History -> HistoryScreen(
                     onNavigateToDetail = { id -> onNavigate(Screen.HistoryDetail(id)) }
+                )
+                Screen.Tools -> ToolsScreen(
+                    onNavigateToGrammar = { onNavigate(Screen.GrammarAnalyzer) }
                 )
                 Screen.Settings -> SettingsScreen(
                     onOpenAnkiSettings = { onNavigate(Screen.AnkiSettings) },
