@@ -1,126 +1,116 @@
-# VNDict - Visual Novel Dictionary
+# Yomidroid
 
-Japanese OCR dictionary overlay for Android. Tap a floating button to capture the screen, recognize Japanese text with ML Kit, and look up words with Yomitan-style deinflection.
+Japanese OCR dictionary overlay for Android. Capture any screen, recognize Japanese text, and look up words with Yomitan-style deinflection.
 
 ## Features
 
-- Floating overlay button that works over any app
-- Japanese text recognition using Google ML Kit
-- Tappable text regions with character-level precision
-- Yomitan-style longest-match lookup with full deinflection support
-- Dictionary popup with readings and definitions
-- Support for conjugated verbs, adjectives, and colloquial forms
+### Core
+- Floating overlay button works over any app
+- Japanese OCR via ML Kit or RapidOCR
+- Tappable text with character-level precision
+- Longest-match lookup with full deinflection (1M+ dictionary entries)
+- Dictionary popup with readings, definitions, frequency ranking
 
-## Building
+### Tools
+- **Grammar Library** - 428 JLPT N5-N2 grammar points with GameGengo video links
+- **Grammar Analyzer** - Morphological analysis with Kuromoji
+- **Translation** - Multi-backend: remote API, on-device LLM (llama.cpp), ML Kit
+
+### Integration
+- AnkiDroid export for flashcard creation
+- Lookup history with screenshots
+
+## Setup
 
 ### Prerequisites
 
 - Android Studio Hedgehog (2023.1.1) or newer
 - JDK 17
 - Android SDK 34
+- Python 3 (for dictionary conversion)
 
-### Dictionary Setup
+### Dictionary Setup (first-time only)
 
-1. Download JMDict XML from [EDRDG](https://www.edrdg.org/wiki/index.php/JMdict-EDICT_Dictionary_Project):
-   ```bash
-   wget http://ftp.edrdg.org/pub/Nihongo/JMdict_e.gz
-   gunzip JMdict_e.gz
-   ```
-
-2. Convert to SQLite:
-   ```bash
-   cd tools
-   python3 convert_jmdict.py JMdict_e.xml ../app/src/main/assets/dictionary.db
-   ```
-
-3. (Optional) Add frequency data for better sorting
-
-### Build APK
+The app bundles a multi-dictionary database with Jitendex (general terms) and JMnedict (names/places).
 
 ```bash
-# Using Gradle wrapper
+cd tools/data
+
+# Download Jitendex (Yomitan format)
+curl -L -o jitendex.zip "https://github.com/stephenmk/stephenmk.github.io/releases/latest/download/jitendex-yomitan.zip"
+
+# Download JMnedict (names/places)
+curl -L -o JMnedict.xml.gz "http://ftp.edrdg.org/pub/Nihongo/JMnedict.xml.gz"
+gunzip JMnedict.xml.gz
+
+# Download Innocent Corpus frequency (5000+ VNs)
+curl -L -o innocent_corpus.zip "https://github.com/FooSoft/yomichan/raw/dictionaries/innocent_corpus.zip"
+
+# Convert to unified SQLite database
+cd ..
+python3 convert_dictionaries.py \
+    --jitendex data/jitendex.zip \
+    --jmnedict data/JMnedict.xml \
+    --frequency data/innocent_corpus.zip \
+    --output ../app/src/main/assets/dictionary.db
+```
+
+Result: ~1M entries (292K Jitendex + 748K JMnedict) with 149K frequency rankings. APK size: ~178MB.
+
+### Build & Install
+
+```bash
+# Build debug APK
 ./gradlew assembleDebug
 
-# APK will be at: app/build/outputs/apk/debug/app-debug.apk
+# Install on connected device
+adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
 Or open in Android Studio and click Run.
 
-## Installation
-
-### Via ADB
-
-1. Enable Developer Options on your device:
-   - Settings → About Phone → Tap "Build Number" 7 times
-
-2. Enable USB Debugging:
-   - Settings → Developer Options → USB Debugging ON
-
-3. Connect device and install:
-   ```bash
-   adb install -r app/build/outputs/apk/debug/app-debug.apk
-   ```
-
-### Permissions
-
-The app requires:
-- **Draw over other apps** - For the floating button and overlay
-- **Screen capture** - To capture screenshots for OCR
-
-Both permissions must be granted manually in Settings.
-
 ## Usage
 
-1. Launch VNDict and grant overlay permission
-2. Tap "Start Overlay" to begin
-3. Grant screen capture permission when prompted
-4. A floating button appears on screen
-5. Navigate to your visual novel
-6. Tap the floating button to capture and scan
-7. Tap on highlighted text to look up words
-8. Tap outside to dismiss the overlay
+1. Launch Yomidroid and grant overlay permission
+2. Enable Accessibility Service in Settings > Accessibility > Yomidroid
+3. A floating button appears on screen
+4. Navigate to your game or visual novel
+5. Tap the floating button to capture and scan
+6. Tap highlighted text to look up words
+7. Tap outside to dismiss the overlay
 
-## Architecture
+### Tools
 
-```
-com.vndict/
-├── MainActivity.kt          # Main UI, permission handling
-├── CapturePermissionActivity.kt  # MediaProjection consent
-├── service/
-│   ├── OverlayService.kt    # Foreground service, FAB, screen capture
-│   └── OverlayTextView.kt   # Text overlay with tap handling
-├── ocr/
-│   └── OcrResult.kt         # OCR result data class
-├── dictionary/
-│   ├── DictionaryEngine.kt  # Longest-match lookup
-│   ├── DictionaryEntry.kt   # Entry data class
-│   └── LanguageTransformer.kt  # Yomitan deinflection (full port)
-└── data/
-    └── DictionaryDatabase.kt  # Room database
-```
+Access via the **Tools** tab in the bottom navigation:
 
-## Deinflection
+- **Grammar Analyzer** - Paste text for morphological breakdown
+- **Grammar Library** - Browse JLPT grammar with video links
+- **Translation** - Translate text using various backends
 
-The deinflection system is a complete port of Yomitan's `japanese-transforms.js`, supporting:
+## Attribution
 
-- All verb conjugations (ichidan, godan, irregular)
-- Adjective conjugations
-- Polite forms (-ます, -ません)
-- Te-form, ta-form, conditional
-- Potential, passive, causative
-- Negative forms
-- Contractions (-ちゃう, -ちまう, etc.)
-- Kansai dialect forms
-- Slang sound changes
+### Dictionary Data
+- [Jitendex](https://github.com/stephenmk/stephenmk.github.io) - Primary dictionary (~292K entries)
+- [JMnedict](https://www.edrdg.org/enamdict/enamdict_doc.html) - Names and places (~748K entries, CC BY-SA)
+- [Innocent Corpus](https://github.com/FooSoft/yomichan) - Frequency rankings from 5000+ visual novels
+
+### Grammar Data
+- [GameGengo](https://www.youtube.com/@GameGengo) - JLPT grammar video timestamps
+- [JLPTSensei](https://jlptsensei.com) - Grammar definitions
+- DOJG references via [kenrick95/itazuraneko](https://github.com/kenrick95/itazuraneko)
+
+### Core Libraries
+- [Yomitan](https://github.com/yomitan/yomitan) - Deinflection algorithm (GPL-3.0)
+- [llama.cpp](https://github.com/ggml-org/llama.cpp) - On-device LLM inference (MIT)
+- [Google ML Kit](https://developers.google.com/ml-kit) - OCR and translation
+- [RapidOCR](https://github.com/RapidAI/RapidOCR)/PaddleOCR - Alternative OCR (Apache 2.0)
+- [OpenCV](https://opencv.org/) - Image processing (Apache 2.0)
+- [ONNX Runtime](https://onnxruntime.ai/) - ML model inference (MIT)
+- [AnkiDroid API](https://github.com/ankidroid/Anki-Android) - Flashcard export
 
 ## License
 
-- App code: MIT
-- Deinflection rules: GPL-3.0 (ported from Yomitan)
-- JMDict: Creative Commons Attribution-ShareAlike License
+MIT License (app code)
+GPL-3.0 (deinflection rules ported from Yomitan)
 
-## Credits
-
-- [Yomitan](https://github.com/yomitan/yomitan) - Deinflection algorithm and rules
-- [JMdict](https://www.edrdg.org/jmdict/j_jmdict.html) - Japanese dictionary data
-- [Google ML Kit](https://developers.google.com/ml-kit) - Japanese text recognition
+See [LICENSE](LICENSE) for details.

@@ -1,6 +1,7 @@
 package com.yomidroid.service
 
 import android.accessibilityservice.AccessibilityService
+import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
@@ -25,6 +26,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.yomidroid.MainActivity
 import com.yomidroid.anki.AnkiDroidExporter
 import com.yomidroid.config.OcrConfig
 import com.yomidroid.config.OcrConfigManager
@@ -710,6 +712,13 @@ class YomidroidAccessibilityService : AccessibilityService() {
         private var lastLookedUpText: String? = null
         private var lastLookedUpIndex: Int = -1
 
+        // Long press handling
+        private var isLongPressTriggered = false
+        private val longPressRunnable = Runnable {
+            isLongPressTriggered = true
+            openMainApp()
+        }
+
         // Physics-based movement
         private var velocityTracker: VelocityTracker? = null
         private var physicsAnimator: FabPhysicsAnimator? = null
@@ -725,6 +734,13 @@ class YomidroidAccessibilityService : AccessibilityService() {
 
         fun cancelFling() {
             physicsAnimator?.cancelAll()
+        }
+
+        private fun openMainApp() {
+            val intent = Intent(this@YomidroidAccessibilityService, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
         }
 
         override fun onTouch(view: View, event: MotionEvent): Boolean {
@@ -745,6 +761,10 @@ class YomidroidAccessibilityService : AccessibilityService() {
                     initialTouchX = event.rawX
                     initialTouchY = event.rawY
                     isClick = true
+                    isLongPressTriggered = false
+
+                    // Schedule long press (500ms)
+                    handler.postDelayed(longPressRunnable, 500L)
                     return true
                 }
 
@@ -756,6 +776,8 @@ class YomidroidAccessibilityService : AccessibilityService() {
 
                     if (abs(dx) > 10 || abs(dy) > 10) {
                         isClick = false
+                        // Cancel long press when dragging
+                        handler.removeCallbacks(longPressRunnable)
 
                         // Calculate new position with rubber-banding at edges
                         var newX = initialX + dx
@@ -798,8 +820,18 @@ class YomidroidAccessibilityService : AccessibilityService() {
                 }
 
                 MotionEvent.ACTION_UP -> {
+                    // Cancel long press if not yet triggered
+                    handler.removeCallbacks(longPressRunnable)
+
                     velocityTracker?.addMovement(event)
                     velocityTracker?.computeCurrentVelocity(1000)  // pixels per second
+
+                    // Skip tap handling if long press was triggered
+                    if (isLongPressTriggered) {
+                        velocityTracker?.recycle()
+                        velocityTracker = null
+                        return true
+                    }
 
                     if (isClick) {
                         val now = System.currentTimeMillis()

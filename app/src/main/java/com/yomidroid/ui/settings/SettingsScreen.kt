@@ -27,6 +27,7 @@ fun SettingsScreen(
     onOpenAnkiSettings: () -> Unit,
     onOpenColorSettings: () -> Unit,
     onOpenOcrSettings: () -> Unit,
+    onOpenTranslationSettings: () -> Unit,
     onOpenAccessibilitySettings: () -> Unit
 ) {
     val context = LocalContext.current
@@ -103,6 +104,12 @@ fun SettingsScreen(
                 title = "OCR Engine",
                 subtitle = "Choose between on-device or cloud OCR",
                 onClick = onOpenOcrSettings
+            )
+
+            SettingsItem(
+                title = "Translation",
+                subtitle = "Configure remote API and on-device translation",
+                onClick = onOpenTranslationSettings
             )
 
             Divider(modifier = Modifier.padding(horizontal = 16.dp))

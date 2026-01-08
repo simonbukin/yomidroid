@@ -33,9 +33,12 @@ import com.yomidroid.ui.OcrSettingsScreen
 import com.yomidroid.ui.history.HistoryDetailScreen
 import com.yomidroid.ui.history.HistoryScreen
 import com.yomidroid.ui.settings.SettingsScreen
+import com.yomidroid.ui.settings.TranslationSettingsScreen
 import com.yomidroid.ui.theme.YomidroidTheme
 import com.yomidroid.ui.tools.GrammarAnalyzerScreen
+import com.yomidroid.ui.tools.GrammarLibraryScreen
 import com.yomidroid.ui.tools.ToolsScreen
+import com.yomidroid.ui.tools.TranslationToolScreen
 
 sealed class Screen(val route: String) {
     object Home : Screen("home")
@@ -43,10 +46,13 @@ sealed class Screen(val route: String) {
     data class HistoryDetail(val id: Long) : Screen("history_detail")
     object Tools : Screen("tools")
     object GrammarAnalyzer : Screen("grammar_analyzer")
+    object GrammarLibrary : Screen("grammar_library")
+    object TranslationTool : Screen("translation_tool")
     object Settings : Screen("settings")
     object AnkiSettings : Screen("anki_settings")
     object ColorSettings : Screen("color_settings")
     object OcrSettings : Screen("ocr_settings")
+    object TranslationSettings : Screen("translation_settings")
 }
 
 class MainActivity : ComponentActivity() {
@@ -83,8 +89,17 @@ class MainActivity : ComponentActivity() {
                     Screen.OcrSettings -> {
                         OcrSettingsScreen(onBack = { currentScreen = Screen.Settings })
                     }
+                    Screen.TranslationSettings -> {
+                        TranslationSettingsScreen(onNavigateBack = { currentScreen = Screen.Settings })
+                    }
                     Screen.GrammarAnalyzer -> {
                         GrammarAnalyzerScreen(onBack = { currentScreen = Screen.Tools })
+                    }
+                    Screen.GrammarLibrary -> {
+                        GrammarLibraryScreen(onBack = { currentScreen = Screen.Tools })
+                    }
+                    Screen.TranslationTool -> {
+                        TranslationToolScreen(onBack = { currentScreen = Screen.Tools })
                     }
                     is Screen.HistoryDetail -> {
                         val detailScreen = currentScreen as Screen.HistoryDetail
@@ -174,12 +189,15 @@ fun MainAppContent(
                     onNavigateToDetail = { id -> onNavigate(Screen.HistoryDetail(id)) }
                 )
                 Screen.Tools -> ToolsScreen(
-                    onNavigateToGrammar = { onNavigate(Screen.GrammarAnalyzer) }
+                    onNavigateToGrammar = { onNavigate(Screen.GrammarAnalyzer) },
+                    onNavigateToGrammarLibrary = { onNavigate(Screen.GrammarLibrary) },
+                    onNavigateToTranslation = { onNavigate(Screen.TranslationTool) }
                 )
                 Screen.Settings -> SettingsScreen(
                     onOpenAnkiSettings = { onNavigate(Screen.AnkiSettings) },
                     onOpenColorSettings = { onNavigate(Screen.ColorSettings) },
                     onOpenOcrSettings = { onNavigate(Screen.OcrSettings) },
+                    onOpenTranslationSettings = { onNavigate(Screen.TranslationSettings) },
                     onOpenAccessibilitySettings = onOpenAccessibilitySettings
                 )
                 else -> HomeScreen(onOpenAccessibilitySettings = onOpenAccessibilitySettings)

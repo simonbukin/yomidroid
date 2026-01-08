@@ -8,12 +8,39 @@ android {
     namespace = "com.yomidroid"
     compileSdk = 34
 
+    // NDK for llama.cpp on-device LLM
+    ndkVersion = "26.1.10909125"
+
     defaultConfig {
         applicationId = "com.yomidroid"
         minSdk = 26
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
+
+        // Only build for arm64 (most modern phones) and x86_64 (emulator)
+        ndk {
+            abiFilters += listOf("arm64-v8a", "x86_64")
+        }
+
+        externalNativeBuild {
+            cmake {
+                arguments += "-DCMAKE_BUILD_TYPE=Release"
+                arguments += "-DBUILD_SHARED_LIBS=ON"
+                arguments += "-DLLAMA_BUILD_COMMON=ON"
+                arguments += "-DLLAMA_CURL=OFF"
+                arguments += "-DGGML_NATIVE=OFF"
+                arguments += "-DGGML_LLAMAFILE=OFF"
+                arguments += "-DGGML_OPENMP=OFF"
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     buildTypes {
@@ -70,6 +97,9 @@ dependencies {
 
     // ML Kit Japanese OCR
     implementation("com.google.mlkit:text-recognition-japanese:16.0.1")
+
+    // ML Kit Translation (Japanese → English fallback)
+    implementation("com.google.mlkit:translate:17.0.3")
 
     // Room for history/dictionary
     implementation("androidx.room:room-runtime:2.6.1")

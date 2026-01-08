@@ -5,7 +5,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -17,7 +17,9 @@ import com.yomidroid.R
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ToolsScreen(
-    onNavigateToGrammar: () -> Unit
+    onNavigateToGrammar: () -> Unit,
+    onNavigateToGrammarLibrary: () -> Unit,
+    onNavigateToTranslation: () -> Unit
 ) {
     Scaffold(
         topBar = {
@@ -30,7 +32,7 @@ fun ToolsScreen(
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
         ) {
-            // Tools Section
+            // Analysis Section
             Text(
                 text = "Analysis",
                 style = MaterialTheme.typography.titleSmall,
@@ -42,6 +44,28 @@ fun ToolsScreen(
                 title = "Grammar Analyzer",
                 subtitle = "Analyze morphology, bunsetsu, and grammar patterns",
                 onClick = onNavigateToGrammar
+            )
+
+            ToolItem(
+                title = "Translation",
+                subtitle = "Translate OCR'd text with natural/literal/interlinear modes",
+                onClick = onNavigateToTranslation
+            )
+
+            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+
+            // Reference Section
+            Text(
+                text = "Reference",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+            )
+
+            ToolItem(
+                title = "Grammar Library",
+                subtitle = "Browse JLPT grammar with GameGengo video lessons",
+                onClick = onNavigateToGrammarLibrary
             )
 
             HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
@@ -106,7 +130,7 @@ private fun ToolItem(
             )
         }
         Icon(
-            Icons.Default.KeyboardArrowRight,
+            Icons.AutoMirrored.Filled.KeyboardArrowRight,
             contentDescription = null,
             tint = MaterialTheme.colorScheme.onSurfaceVariant
         )

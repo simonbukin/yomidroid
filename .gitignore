@@ -82,3 +82,21 @@ proguard/
 
 # Claude Code
 .claude/
+
+# Python (for tools/)
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+*.egg-info/
+
+# GGUF/LLM models (too large for git)
+*.gguf
+*.bin
+
+# IDE
+.vscode/
+
+# Rsync staging
+rsync/
