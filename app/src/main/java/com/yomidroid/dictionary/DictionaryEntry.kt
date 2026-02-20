@@ -5,13 +5,15 @@ package com.yomidroid.dictionary
  */
 enum class DictionarySource {
     JITENDEX,
-    JMNEDICT;
+    JMNEDICT,
+    CUSTOM;
 
     companion object {
         fun fromString(value: String?): DictionarySource {
             return when (value?.lowercase()) {
                 "jmnedict" -> JMNEDICT
-                else -> JITENDEX
+                "jitendex" -> JITENDEX
+                else -> CUSTOM
             }
         }
     }
@@ -60,15 +62,27 @@ data class DictionaryEntry(
     // Multi-dictionary support
     val source: DictionarySource = DictionarySource.JITENDEX,
     val nameType: NameType? = null,
-    val frequencyRank: Int? = null
+    val frequencyRank: Int? = null,
+    val jpdbRank: Int? = null,
+    val pitchDownstep: Int? = null,  // primary (backward compat)
+    val pitchDownsteps: List<Int> = emptyList(),
+    val sourceDictId: String = "bundled",
+    val dictionaryTitle: String = "",  // title from InstalledDictionary (for CSS scoping)
+    val additionalFrequencies: Map<String, Int> = emptyMap(),
+    val glossaryRich: String? = null,
+    val definitionTags: List<String> = emptyList(),
+    val tagMeta: Map<String, com.yomidroid.data.TagMeta> = emptyMap()
 ) {
     /** Returns true if this entry is from the names dictionary */
     val isName: Boolean get() = source == DictionarySource.JMNEDICT
 
     /** User-friendly source label for display */
-    val sourceLabel: String get() = when (source) {
-        DictionarySource.JITENDEX -> "Jitendex"
-        DictionarySource.JMNEDICT -> "JMnedict"
+    val sourceLabel: String get() {
+        return when (source) {
+            DictionarySource.JITENDEX -> "Jitendex"
+            DictionarySource.JMNEDICT -> "JMnedict"
+            DictionarySource.CUSTOM -> sourceDictId.replace('_', ' ').replaceFirstChar { it.uppercase() }
+        }
     }
 
     /** Name type label for UI badges (null for non-name entries) */
@@ -84,17 +98,75 @@ data class DictionaryEntry(
         null -> null
     }
 
-    /** Frequency badge text (e.g., "Top 500", "Top 1K") */
-    val frequencyBadge: String? get() = frequencyRank?.let { rank ->
-        when {
-            rank <= 500 -> "Top 500"
-            rank <= 1000 -> "Top 1K"
-            rank <= 2000 -> "Top 2K"
-            rank <= 5000 -> "Top 5K"
-            rank <= 10000 -> "Top 10K"
-            else -> null  // Don't show badge for uncommon words
+    /** Human-readable POS label for display */
+    val posDisplayLabel: String? get() {
+        if (partsOfSpeech.isEmpty()) return null
+        val labels = partsOfSpeech.mapNotNull { tag ->
+            when (tag) {
+                "v1" -> "Ichidan"
+                "v5k", "v5s", "v5t", "v5n", "v5m", "v5r", "v5u", "v5g", "v5b",
+                "v5k-s", "v5aru" -> "Godan"
+                "vs", "vs-i", "vs-s" -> "Suru verb"
+                "vk" -> "Kuru verb"
+                "vt" -> "Transitive"
+                "vi" -> "Intransitive"
+                "adj-i" -> "i-adj"
+                "adj-na" -> "na-adj"
+                "adj-no" -> "no-adj"
+                "adj-t", "adj-f" -> "Adj"
+                "n" -> "Noun"
+                "adv" -> "Adverb"
+                "exp" -> "Expression"
+                "prt" -> "Particle"
+                "conj" -> "Conjunction"
+                "int" -> "Interjection"
+                "pn" -> "Pronoun"
+                "suf" -> "Suffix"
+                "pref" -> "Prefix"
+                "ctr" -> "Counter"
+                "aux", "aux-v", "aux-adj" -> "Auxiliary"
+                "cop" -> "Copula"
+                "name" -> null // Already shown as name badge
+                else -> null
+            }
+        }.distinct()
+        return if (labels.isNotEmpty()) labels.joinToString(", ") else null
+    }
+
+    /** Frequency badge text — uses highest-priority enabled frequency or bundled rank */
+    val frequencyBadge: String? get() {
+        val rank = frequencyRank ?: additionalFrequencies.values.minOrNull()
+        return rank?.let { if (it <= 50000) "#$it" else null }
+    }
+
+    /** ARGB color for the frequency badge */
+    val frequencyBadgeColor: Int get() {
+        val rank = frequencyRank ?: additionalFrequencies.values.minOrNull() ?: return 0xFF4CAF50.toInt()
+        return when {
+            rank <= 1500 -> 0xFF4CAF50.toInt()   // Green
+            rank <= 5000 -> 0xFF8BC34A.toInt()    // Light green
+            rank <= 15000 -> 0xFFFFC107.toInt()   // Amber
+            rank <= 50000 -> 0xFFFF9800.toInt()   // Orange
+            else -> 0xFF4CAF50.toInt()
         }
     }
+
+    /** JPDB frequency badge text */
+    val jpdbBadge: String? get() = jpdbRank?.let { rank ->
+        if (rank <= 50000) "JPDB #$rank" else null
+    }
+
+    /** ARGB color for the JPDB badge */
+    val jpdbBadgeColor: Int get() = jpdbRank?.let { rank ->
+        when {
+            rank <= 1500 -> 0xFF7C4DFF.toInt()   // Deep purple
+            rank <= 5000 -> 0xFF9C27B0.toInt()    // Purple
+            rank <= 15000 -> 0xFFAB47BC.toInt()   // Light purple
+            rank <= 50000 -> 0xFFCE93D8.toInt()   // Pale purple
+            else -> 0xFF9C27B0.toInt()
+        }
+    } ?: 0xFF9C27B0.toInt()
+
 }
 
 /**

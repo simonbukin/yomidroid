@@ -19,7 +19,8 @@ import com.yomidroid.R
 fun ToolsScreen(
     onNavigateToGrammar: () -> Unit,
     onNavigateToGrammarLibrary: () -> Unit,
-    onNavigateToTranslation: () -> Unit
+    onNavigateToTranslation: () -> Unit,
+    onNavigateToDictionarySearch: () -> Unit
 ) {
     Scaffold(
         topBar = {
@@ -63,42 +64,16 @@ fun ToolsScreen(
             )
 
             ToolItem(
+                title = "Dictionary Search",
+                subtitle = "Search the dictionary manually by word or reading",
+                onClick = onNavigateToDictionarySearch
+            )
+
+            ToolItem(
                 title = "Grammar Library",
                 subtitle = "Browse JLPT grammar with GameGengo video lessons",
                 onClick = onNavigateToGrammarLibrary
             )
-
-            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
-
-            // Coming Soon Section
-            Text(
-                text = "Coming Soon",
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
-            )
-
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                )
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = "More tools are on the way!",
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "Planned features include sentence games, pitch accent visualization, and more learning tools.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
 
             Spacer(modifier = Modifier.height(16.dp))
         }

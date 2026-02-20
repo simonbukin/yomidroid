@@ -9,6 +9,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
@@ -24,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import com.yomidroid.data.AppDatabase
 import com.yomidroid.data.GrammarSentenceEntity
 import com.yomidroid.ocr.OcrResultRepository
+import com.yomidroid.tts.TtsManager
 import com.yomidroid.translation.BackendStatus
 import com.yomidroid.translation.TranslationMode
 import com.yomidroid.translation.TranslationResult
@@ -45,6 +47,11 @@ fun TranslationToolScreen(
 
     val translationService = remember { TranslationService.getInstance(context) }
     val database = remember { AppDatabase.getInstance(context) }
+    val ttsManager = remember { TtsManager(context) }
+
+    DisposableEffect(Unit) {
+        onDispose { ttsManager.shutdown() }
+    }
 
     // Get latest OCR text
     val latestOcrText by OcrResultRepository.latestOcrText.collectAsState()
@@ -219,7 +226,18 @@ fun TranslationToolScreen(
                     label = { Text("Japanese text") },
                     placeholder = { Text("Paste or scan text to translate...") },
                     maxLines = 4,
-                    singleLine = false
+                    singleLine = false,
+                    trailingIcon = {
+                        if (inputText.isNotBlank()) {
+                            IconButton(onClick = { ttsManager.speak(inputText) }) {
+                                Icon(
+                                    Icons.AutoMirrored.Filled.VolumeUp,
+                                    contentDescription = "Read aloud",
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    }
                 )
             }
 

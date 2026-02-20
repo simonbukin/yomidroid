@@ -8,7 +8,8 @@ import android.content.SharedPreferences
  */
 enum class OcrEngineType(val displayName: String, val description: String) {
     ML_KIT("ML Kit (On-Device)", "Google's fast OCR"),
-    RAPID_OCR("RapidOCR (On-Device)", "PaddleOCR-based, excellent for Japanese")
+    RAPID_OCR("RapidOCR (On-Device)", "PaddleOCR-based, excellent for Japanese"),
+    MANGA_OCR("Manga OCR", "manga-ocr model, best for manga (requires ~141MB download)")
 }
 
 /**

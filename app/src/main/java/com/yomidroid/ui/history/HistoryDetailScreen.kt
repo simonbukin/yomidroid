@@ -1,5 +1,8 @@
 package com.yomidroid.ui.history
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.graphics.BitmapFactory
 import android.widget.Toast
 import androidx.compose.foundation.Image
@@ -11,6 +14,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -29,13 +33,21 @@ import com.yomidroid.anki.AnkiDroidExporter
 import com.yomidroid.anki.ExportResult
 import com.yomidroid.data.AppDatabase
 import com.yomidroid.data.LookupHistoryEntity
+import com.yomidroid.dictionary.DictionaryEngine
 import com.yomidroid.dictionary.DictionaryEntry
+import com.yomidroid.ui.components.DictionaryEntryWebView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
+
+private fun copyToClipboard(context: android.content.Context, label: String, text: String) {
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    clipboard.setPrimaryClip(ClipData.newPlainText(label, text))
+    Toast.makeText(context, "Copied $label", Toast.LENGTH_SHORT).show()
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -47,16 +59,22 @@ fun HistoryDetailScreen(
     val scope = rememberCoroutineScope()
 
     var entry by remember { mutableStateOf<LookupHistoryEntity?>(null) }
+    var dictEntries by remember { mutableStateOf<List<DictionaryEntry>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var ankiButtonState by remember { mutableStateOf(AnkiButtonState.IDLE) }
 
     val ankiExporter = remember { AnkiDroidExporter(context) }
+    val dictionaryEngine = remember { DictionaryEngine(context) }
 
-    // Load entry
+    // Load entry + re-lookup from dictionary for rich rendering
     LaunchedEffect(historyId) {
-        withContext(Dispatchers.IO) {
-            entry = AppDatabase.getInstance(context).historyDao().getById(historyId)
+        val historyEntry = withContext(Dispatchers.IO) {
+            AppDatabase.getInstance(context).historyDao().getById(historyId)
+        }
+        entry = historyEntry
+        if (historyEntry != null) {
+            dictEntries = dictionaryEngine.searchTerm(historyEntry.word)
         }
         isLoading = false
     }
@@ -250,11 +268,28 @@ fun HistoryDetailScreen(
                                     )
                                 ) {
                                     Column(modifier = Modifier.padding(16.dp)) {
-                                        Text(
-                                            text = "Context",
-                                            style = MaterialTheme.typography.labelMedium,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = "Context",
+                                                style = MaterialTheme.typography.labelMedium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            IconButton(
+                                                onClick = { copyToClipboard(context, "sentence", sentence) },
+                                                modifier = Modifier.size(32.dp)
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.ContentCopy,
+                                                    contentDescription = "Copy sentence",
+                                                    modifier = Modifier.size(18.dp),
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
                                         Spacer(modifier = Modifier.height(8.dp))
                                         Text(
                                             text = sentence,
@@ -265,54 +300,67 @@ fun HistoryDetailScreen(
                             }
                         }
 
-                        // Word and reading
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.primaryContainer
-                            )
-                        ) {
-                            Column(modifier = Modifier.padding(16.dp)) {
-                                Text(
-                                    text = item.word,
-                                    style = MaterialTheme.typography.headlineMedium,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                        // Dictionary entry — rich WebView if re-lookup succeeded, plain fallback otherwise
+                        if (dictEntries.isNotEmpty()) {
+                            Card(modifier = Modifier.fillMaxWidth()) {
+                                DictionaryEntryWebView(
+                                    entries = dictEntries,
+                                    modifier = Modifier.fillMaxWidth()
                                 )
-                                if (item.reading.isNotEmpty() && item.reading != item.word) {
-                                    Text(
-                                        text = item.reading,
-                                        style = MaterialTheme.typography.titleMedium,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
-                                    )
-                                }
                             }
-                        }
-
-                        // Definition
-                        Card(
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(modifier = Modifier.padding(16.dp)) {
-                                Text(
-                                    text = "Definition",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                        } else {
+                            // Fallback: plain word + reading card
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.primaryContainer
                                 )
-                                Spacer(modifier = Modifier.height(8.dp))
-
-                                val definitions = item.definition.split("; ")
-                                definitions.forEachIndexed { index, def ->
-                                    Row(modifier = Modifier.padding(vertical = 2.dp)) {
+                            ) {
+                                Column(modifier = Modifier.padding(16.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
                                         Text(
-                                            text = "${index + 1}.",
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.width(24.dp)
+                                            text = item.word,
+                                            style = MaterialTheme.typography.headlineMedium,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer
                                         )
+                                        IconButton(
+                                            onClick = { copyToClipboard(context, "word", item.word) },
+                                            modifier = Modifier.size(32.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Default.ContentCopy,
+                                                contentDescription = "Copy word",
+                                                modifier = Modifier.size(18.dp),
+                                                tint = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                                            )
+                                        }
+                                    }
+                                    if (item.reading.isNotEmpty() && item.reading != item.word) {
                                         Text(
-                                            text = def,
-                                            style = MaterialTheme.typography.bodyMedium
+                                            text = item.reading,
+                                            style = MaterialTheme.typography.titleMedium,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                                         )
+                                    }
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    val definitions = item.definition.split("; ")
+                                    definitions.forEachIndexed { index, def ->
+                                        Row(modifier = Modifier.padding(vertical = 2.dp)) {
+                                            Text(
+                                                text = "${index + 1}.",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.width(24.dp)
+                                            )
+                                            Text(
+                                                text = def,
+                                                style = MaterialTheme.typography.bodyMedium
+                                            )
+                                        }
                                     }
                                 }
                             }

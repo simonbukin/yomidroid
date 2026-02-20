@@ -23,7 +23,7 @@ class CursorFabView(context: Context) : View(context) {
     private val cursorGap = 8f * density
 
     // Whether cursor dot is below (true) or above (false) the main circle
-    var cursorOnBottom = true
+    var cursorOnBottom = false
         private set
 
     // Configurable colors

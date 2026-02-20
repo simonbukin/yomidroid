@@ -93,6 +93,7 @@ dependencies {
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-extended")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     // ML Kit Japanese OCR
@@ -117,6 +118,9 @@ dependencies {
 
     // RapidOCR (PaddleOCR-based ONNX engine)
     implementation(project(":OcrLibrary"))
+
+    // ONNX Runtime for Manga OCR inference
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.14.0")
 
     // Kuromoji Japanese morphological analyzer (for Grammar Analyzer)
     implementation("com.atilika.kuromoji:kuromoji-ipadic:0.9.0")

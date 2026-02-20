@@ -3,21 +3,16 @@ package com.yomidroid
 import android.content.Intent
 import android.os.Bundle
 import android.provider.Settings
-import android.text.TextUtils
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
@@ -25,34 +20,38 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.yomidroid.config.ColorConfigManager
-import com.yomidroid.data.DictionaryLoader
 import com.yomidroid.service.YomidroidAccessibilityService
 import com.yomidroid.ui.AnkiSettingsScreen
 import com.yomidroid.ui.ColorSettingsScreen
+import com.yomidroid.ui.InputSettingsScreen
 import com.yomidroid.ui.OcrSettingsScreen
 import com.yomidroid.ui.history.HistoryDetailScreen
 import com.yomidroid.ui.history.HistoryScreen
 import com.yomidroid.ui.settings.SettingsScreen
+import com.yomidroid.ui.settings.DictionarySettingsScreen
 import com.yomidroid.ui.settings.TranslationSettingsScreen
 import com.yomidroid.ui.theme.YomidroidTheme
+import com.yomidroid.ui.tools.DictionarySearchScreen
 import com.yomidroid.ui.tools.GrammarAnalyzerScreen
 import com.yomidroid.ui.tools.GrammarLibraryScreen
 import com.yomidroid.ui.tools.ToolsScreen
 import com.yomidroid.ui.tools.TranslationToolScreen
 
 sealed class Screen(val route: String) {
-    object Home : Screen("home")
     object History : Screen("history")
     data class HistoryDetail(val id: Long) : Screen("history_detail")
     object Tools : Screen("tools")
     object GrammarAnalyzer : Screen("grammar_analyzer")
     object GrammarLibrary : Screen("grammar_library")
     object TranslationTool : Screen("translation_tool")
+    object DictionarySearch : Screen("dictionary_search")
     object Settings : Screen("settings")
     object AnkiSettings : Screen("anki_settings")
     object ColorSettings : Screen("color_settings")
     object OcrSettings : Screen("ocr_settings")
     object TranslationSettings : Screen("translation_settings")
+    object InputSettings : Screen("input_settings")
+    object DictionarySettings : Screen("dictionary_settings")
 }
 
 class MainActivity : ComponentActivity() {
@@ -77,7 +76,7 @@ class MainActivity : ComponentActivity() {
             }
 
             YomidroidTheme(accentColor = Color(colorConfig.accentColor)) {
-                var currentScreen by remember { mutableStateOf<Screen>(Screen.Home) }
+                var currentScreen by remember { mutableStateOf<Screen>(Screen.Tools) }
 
                 when (currentScreen) {
                     Screen.AnkiSettings -> {
@@ -92,6 +91,12 @@ class MainActivity : ComponentActivity() {
                     Screen.TranslationSettings -> {
                         TranslationSettingsScreen(onNavigateBack = { currentScreen = Screen.Settings })
                     }
+                    Screen.InputSettings -> {
+                        InputSettingsScreen(onBack = { currentScreen = Screen.Settings })
+                    }
+                    Screen.DictionarySettings -> {
+                        DictionarySettingsScreen(onBack = { currentScreen = Screen.Settings })
+                    }
                     Screen.GrammarAnalyzer -> {
                         GrammarAnalyzerScreen(onBack = { currentScreen = Screen.Tools })
                     }
@@ -100,6 +105,9 @@ class MainActivity : ComponentActivity() {
                     }
                     Screen.TranslationTool -> {
                         TranslationToolScreen(onBack = { currentScreen = Screen.Tools })
+                    }
+                    Screen.DictionarySearch -> {
+                        DictionarySearchScreen(onBack = { currentScreen = Screen.Tools })
                     }
                     is Screen.HistoryDetail -> {
                         val detailScreen = currentScreen as Screen.HistoryDetail
@@ -135,17 +143,6 @@ fun MainAppContent(
     Scaffold(
         bottomBar = {
             NavigationBar {
-                NavigationBarItem(
-                    selected = currentScreen == Screen.Home,
-                    onClick = { onNavigate(Screen.Home) },
-                    icon = {
-                        Icon(
-                            if (currentScreen == Screen.Home) Icons.Filled.Home else Icons.Outlined.Home,
-                            contentDescription = "Home"
-                        )
-                    },
-                    label = { Text("Home") }
-                )
                 NavigationBarItem(
                     selected = currentScreen == Screen.History,
                     onClick = { onNavigate(Screen.History) },
@@ -184,176 +181,32 @@ fun MainAppContent(
     ) { padding ->
         Box(modifier = Modifier.padding(padding)) {
             when (currentScreen) {
-                Screen.Home -> HomeScreen(onOpenAccessibilitySettings = onOpenAccessibilitySettings)
                 Screen.History -> HistoryScreen(
                     onNavigateToDetail = { id -> onNavigate(Screen.HistoryDetail(id)) }
                 )
                 Screen.Tools -> ToolsScreen(
                     onNavigateToGrammar = { onNavigate(Screen.GrammarAnalyzer) },
                     onNavigateToGrammarLibrary = { onNavigate(Screen.GrammarLibrary) },
-                    onNavigateToTranslation = { onNavigate(Screen.TranslationTool) }
+                    onNavigateToTranslation = { onNavigate(Screen.TranslationTool) },
+                    onNavigateToDictionarySearch = { onNavigate(Screen.DictionarySearch) }
                 )
                 Screen.Settings -> SettingsScreen(
                     onOpenAnkiSettings = { onNavigate(Screen.AnkiSettings) },
                     onOpenColorSettings = { onNavigate(Screen.ColorSettings) },
                     onOpenOcrSettings = { onNavigate(Screen.OcrSettings) },
                     onOpenTranslationSettings = { onNavigate(Screen.TranslationSettings) },
+                    onOpenInputSettings = { onNavigate(Screen.InputSettings) },
+                    onOpenDictionarySettings = { onNavigate(Screen.DictionarySettings) },
                     onOpenAccessibilitySettings = onOpenAccessibilitySettings
                 )
-                else -> HomeScreen(onOpenAccessibilitySettings = onOpenAccessibilitySettings)
-            }
-        }
-    }
-}
-
-@Composable
-fun HomeScreen(
-    onOpenAccessibilitySettings: () -> Unit
-) {
-    val context = LocalContext.current
-    val lifecycleOwner = LocalLifecycleOwner.current
-
-    var isAccessibilityEnabled by remember { mutableStateOf(false) }
-    var isDictionaryLoaded by remember { mutableStateOf<Boolean?>(null) }
-    var isLoadingDictionary by remember { mutableStateOf(false) }
-
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                val serviceName = "${context.packageName}/${YomidroidAccessibilityService::class.java.canonicalName}"
-                val enabledServices = Settings.Secure.getString(
-                    context.contentResolver,
-                    Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+                else -> ToolsScreen(
+                    onNavigateToGrammar = { onNavigate(Screen.GrammarAnalyzer) },
+                    onNavigateToGrammarLibrary = { onNavigate(Screen.GrammarLibrary) },
+                    onNavigateToTranslation = { onNavigate(Screen.TranslationTool) },
+                    onNavigateToDictionarySearch = { onNavigate(Screen.DictionarySearch) }
                 )
-                isAccessibilityEnabled = !TextUtils.isEmpty(enabledServices) && enabledServices.contains(serviceName)
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
-
-    LaunchedEffect(Unit) {
-        isLoadingDictionary = true
-        isDictionaryLoaded = DictionaryLoader.ensureDictionaryLoaded(context)
-        isLoadingDictionary = false
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Text(
-            text = "Yomidroid",
-            style = MaterialTheme.typography.headlineLarge
-        )
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Text(
-            text = "Japanese OCR Dictionary",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-
-        Spacer(modifier = Modifier.height(48.dp))
-
-        // Dictionary status
-        when {
-            isLoadingDictionary -> {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
-                        Spacer(modifier = Modifier.width(16.dp))
-                        Text("Loading dictionary...")
-                    }
-                }
-                Spacer(modifier = Modifier.height(16.dp))
-            }
-
-            isDictionaryLoaded == false -> {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(text = "Dictionary not found", style = MaterialTheme.typography.titleMedium)
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(text = "Place dictionary.db in app assets and rebuild.", style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-                Spacer(modifier = Modifier.height(16.dp))
-            }
-
-            isDictionaryLoaded == true -> {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
-                ) {
-                    Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = "Dictionary loaded",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.height(16.dp))
-            }
-        }
-
-        // Accessibility status
-        if (isAccessibilityEnabled) {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = "Ready to scan!",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "The floating button should be visible. Open any app and tap the button to scan Japanese text.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                }
-            }
-        } else {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(text = "Accessibility Service Required", style = MaterialTheme.typography.titleMedium)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "Yomidroid needs accessibility permission to capture the screen for OCR.",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Button(onClick = onOpenAccessibilitySettings, modifier = Modifier.fillMaxWidth()) {
-                        Text("Enable in Settings")
-                    }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "Settings > Accessibility > Yomidroid > Enable",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
             }
         }
     }
 }
+

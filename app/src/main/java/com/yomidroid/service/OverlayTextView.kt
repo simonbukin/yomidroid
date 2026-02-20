@@ -7,6 +7,7 @@ import android.graphics.drawable.Drawable
 import android.text.Layout
 import android.text.StaticLayout
 import android.text.TextPaint
+import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.View
 import android.view.animation.DecelerateInterpolator
@@ -39,7 +40,8 @@ class OverlayTextView(
     private val onDismissRequested: () -> Unit = {},
     private val onCursorLookup: ((String, Int, Float, Float) -> Unit)? = null,
     private val onAnkiExport: ((DictionaryEntry, String) -> Unit)? = null,  // Export to Anki callback
-    private val onSaveToHistory: ((DictionaryEntry, String) -> Unit)? = null  // Save to history callback
+    private val onSaveToHistory: ((DictionaryEntry, String) -> Unit)? = null,  // Save to history callback
+    private val onDismissRichPopup: (() -> Unit)? = null  // Dismiss WebView popup callback
 ) : View(context) {
 
     private val density = context.resources.displayMetrics.density
@@ -173,6 +175,12 @@ class OverlayTextView(
         textSize = 10f * density
     }
 
+    private val entryCounterPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(160, 200, 200, 200)
+        textSize = 12f * density
+        textAlign = Paint.Align.CENTER
+    }
+
     // Anki icon drawable
     private val ankiIcon: Drawable? = ContextCompat.getDrawable(context, R.drawable.ic_anki)
 
@@ -210,21 +218,35 @@ class OverlayTextView(
     private var lastTouchY: Float = 0f
     private var isDraggingPopup: Boolean = false
 
+    // When true, a WebView popup is active — skip Canvas popup drawing
+    var richPopupActive: Boolean = false
+
+    // Cursor position for smart popup placement (avoids overlapping cursor FAB)
+    private var lastCursorY: Float = 0f
+
     // Track popup open time for history feature
     private var popupOpenTime: Long = 0L
     private var lastShownEntry: DictionaryEntry? = null
     private var lastShownSentence: String = ""
+    private var lastSavedExpression: String? = null
 
     /**
-     * Pre-computed tight bounding boxes for hit testing.
+     * Pre-computed tight bounding boxes for hit testing, in view-local coordinates.
      * ML Kit's lineBounds includes extra padding which causes cursor misalignment,
      * so we compute tight bounds from actual character bounding boxes instead.
+     * Applies overlay offset so bounds match onTouchEvent coordinates.
      * Lazy to avoid computation until first touch event.
      */
     private val adjustedResults: List<Pair<OcrResult, RectF>> by lazy {
+        // Get overlay offset to convert from screen space to view-local space
+        val loc = IntArray(2)
+        getLocationOnScreen(loc)
+        val ofsX = -loc[0].toFloat()
+        val ofsY = -loc[1].toFloat()
+
         ocrResults.map { result ->
             val actualBounds = if (result.charBounds.isNotEmpty()) {
-                // Calculate tight bounds from actual characters
+                // Calculate tight bounds from actual characters (in screen space)
                 var left = Float.MAX_VALUE
                 var top = Float.MAX_VALUE
                 var right = Float.MIN_VALUE
@@ -235,9 +257,12 @@ class OverlayTextView(
                     right = maxOf(right, bounds.right * scaleX)
                     bottom = maxOf(bottom, bounds.bottom * scaleY)
                 }
-                RectF(left, top, right, bottom)
+                // Apply overlay offset to convert to view-local space
+                RectF(left + ofsX, top + ofsY, right + ofsX, bottom + ofsY)
             } else {
-                result.lineBounds.toScreenCoords()
+                val screenBounds = result.lineBounds.toScreenCoords()
+                screenBounds.offset(ofsX, ofsY)
+                screenBounds
             }
             result to actualBounds
         }
@@ -343,6 +368,7 @@ class OverlayTextView(
      */
     private fun drawDefinitionsList(canvas: Canvas, entries: List<DictionaryEntry>) {
         if (popupAlpha <= 0f || entries.isEmpty()) return
+        if (richPopupActive) return  // WebView popup handles rendering
 
         val paddingH = 20f * density
         val paddingV = 16f * density
@@ -401,6 +427,12 @@ class OverlayTextView(
             if (entry.reading.isNotEmpty() && entry.reading != entry.expression) {
                 entryHeight += readingPaint.textSize + 2f * density  // Reading
             }
+            if (entry.pitchDownstep != null) {
+                entryHeight += 24f * density  // Pitch contour
+            }
+            if (entry.posDisplayLabel != null) {
+                entryHeight += posTagPaint.textSize + 4f * density  // POS label
+            }
             if (entry.deinflectionPath.isNotEmpty()) {
                 entryHeight += deinflectPaint.textSize + 8f * density  // Deinflection
             }
@@ -425,17 +457,73 @@ class OverlayTextView(
         }
         popupContentHeight = totalContentHeight
 
-        // Calculate popup height (constrained)
-        val fullPopupHeight = totalContentHeight + paddingV * 2
+        // Calculate popup height (constrained), accounting for counter
+        val counterReserve = if (entries.size > 1) 18f * density else 0f
+        val fullPopupHeight = totalContentHeight + paddingV * 2 + counterReserve
         val popupHeight = minOf(fullPopupHeight, maxHeight)
-        popupVisibleHeight = popupHeight - paddingV * 2
+        popupVisibleHeight = popupHeight - paddingV * 2 - counterReserve
 
-        // Position popup
+        // Compute the bounding rect of highlighted text in view coordinates
+        val (offsetX, offsetY) = getOverlayOffset()
+        var hlTop = Float.MAX_VALUE
+        var hlBottom = Float.MIN_VALUE
+        val crossLine = crossLineHighlight
+        if (crossLine != null && crossLine.isNotEmpty()) {
+            for (mapping in crossLine) {
+                val bounds = mapping.ocrResult.charBounds.getOrNull(mapping.charIndex)
+                if (bounds != null) {
+                    val top = bounds.top * scaleY + offsetY
+                    val bottom = bounds.bottom * scaleY + offsetY
+                    if (top < hlTop) hlTop = top
+                    if (bottom > hlBottom) hlBottom = bottom
+                }
+            }
+        } else if (selectedResult != null && selectedCharIndex >= 0) {
+            for (i in 0 until selectedMatchLength) {
+                val bounds = selectedResult!!.charBounds.getOrNull(selectedCharIndex + i)
+                if (bounds != null) {
+                    val top = bounds.top * scaleY + offsetY
+                    val bottom = bounds.bottom * scaleY + offsetY
+                    if (top < hlTop) hlTop = top
+                    if (bottom > hlBottom) hlBottom = bottom
+                }
+            }
+        }
+
+        // Smart popup positioning: avoid covering the highlighted text
         var finalX = popupX - popupWidth / 2
-        var finalY = popupY - popupHeight - 20f * density
         finalX = finalX.coerceIn(8f, width - popupWidth - 8f)
-        if (finalY < 8f) {
-            finalY = popupY + 40f * density
+        val margin = 12f * density
+        var finalY: Float
+        if (hlTop < Float.MAX_VALUE && hlBottom > Float.MIN_VALUE) {
+            // We have valid highlight bounds - position to avoid covering them
+            val spaceAbove = hlTop
+            val spaceBelow = height - hlBottom
+            finalY = if (spaceBelow >= popupHeight + margin) {
+                // Enough space below highlighted text
+                hlBottom + margin
+            } else if (spaceAbove >= popupHeight + margin) {
+                // Enough space above highlighted text
+                hlTop - popupHeight - margin
+            } else if (spaceBelow > spaceAbove) {
+                // More space below, even if tight
+                hlBottom + margin
+            } else {
+                // More space above, even if tight
+                hlTop - popupHeight - margin
+            }
+        } else {
+            // Fallback to cursor-based positioning
+            val spaceAbove = lastCursorY
+            val spaceBelow = height - lastCursorY
+            val fabMargin = 60f * density
+            finalY = if (lastCursorY > 0f && (spaceBelow > spaceAbove)) {
+                lastCursorY + fabMargin
+            } else if (lastCursorY > 0f) {
+                lastCursorY - popupHeight - 40f * density
+            } else {
+                popupY - popupHeight - 20f * density
+            }
         }
         finalY = finalY.coerceIn(8f, height - popupHeight - 8f)
 
@@ -455,9 +543,29 @@ class OverlayTextView(
         canvas.drawRoundRect(rect, cornerRadius, cornerRadius, bgPaint)
         canvas.drawRoundRect(rect, cornerRadius, cornerRadius, borderPaint)
 
-        // Clip content area for scrolling
+        // Draw entry counter ("1 of 3") when multiple entries
+        val counterHeight = if (entries.size > 1) 18f * density else 0f
+        if (entries.size > 1) {
+            // Calculate which entry is currently visible based on scroll position
+            var visibleIndex = 0
+            var accHeight = 0f
+            for (i in entryLayouts.indices) {
+                accHeight += entryLayouts[i].height
+                if (i < entryLayouts.size - 1) accHeight += dividerHeight
+                if (accHeight > popupScrollY + 10f * density) {
+                    visibleIndex = i
+                    break
+                }
+                if (i == entryLayouts.lastIndex) visibleIndex = i
+            }
+            val counterText = "${visibleIndex + 1} of ${entries.size}"
+            val counterPaint = Paint(entryCounterPaint).apply { this.alpha = (alpha * 255).toInt() }
+            canvas.drawText(counterText, finalX + popupWidth / 2, finalY + paddingV / 2 + counterPaint.textSize / 3, counterPaint)
+        }
+
+        // Clip content area for scrolling (shifted down by counter height)
         canvas.save()
-        canvas.clipRect(finalX, finalY + paddingV, finalX + popupWidth, finalY + popupHeight - paddingV)
+        canvas.clipRect(finalX, finalY + paddingV + counterHeight, finalX + popupWidth, finalY + popupHeight - paddingV)
 
         // Clear Anki button bounds list
         ankiButtonBoundsList.clear()
@@ -472,7 +580,7 @@ class OverlayTextView(
             strokeWidth = 1f * density
         }
 
-        var currentY = finalY + paddingV - popupScrollY
+        var currentY = finalY + paddingV + counterHeight - popupScrollY
 
         entryLayouts.forEachIndexed { index, entryLayout ->
             val entry = entryLayout.entry
@@ -566,8 +674,9 @@ class OverlayTextView(
             canvas.drawText(entry.expression, finalX + paddingH, y, headPaint)
             var badgeX = finalX + paddingH + headwordPaint.measureText(entry.expression) + 8f * density
 
-            // Draw frequency badge
+            // Draw frequency badge (dynamic color per entry)
             entry.frequencyBadge?.let { badge ->
+                val badgeColor = entry.frequencyBadgeColor
                 val badgePadH = 6f * density
                 val badgePadV = 2f * density
                 val badgeWidth = frequencyBadgePaint.measureText(badge) + badgePadH * 2
@@ -575,11 +684,38 @@ class OverlayTextView(
 
                 if (badgeX + badgeWidth <= maxContentX) {
                     val badgeY = y - headwordPaint.textSize + (headwordPaint.textSize - badgeHeight) / 2
-                    val freqBgPaint = Paint(frequencyBadgeBgPaint).apply { this.alpha = (alpha * 255).toInt() }
+                    val freqBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        color = Color.argb((40 * alpha).toInt(), Color.red(badgeColor), Color.green(badgeColor), Color.blue(badgeColor))
+                    }
                     val badgeRect = RectF(badgeX, badgeY, badgeX + badgeWidth, badgeY + badgeHeight)
                     canvas.drawRoundRect(badgeRect, badgeHeight / 2, badgeHeight / 2, freqBgPaint)
-                    val freqTextPaint = Paint(frequencyBadgePaint).apply { this.alpha = (alpha * 255).toInt() }
+                    val freqTextPaint = Paint(frequencyBadgePaint).apply {
+                        color = Color.argb((220 * alpha).toInt(), Color.red(badgeColor), Color.green(badgeColor), Color.blue(badgeColor))
+                    }
                     canvas.drawText(badge, badgeX + badgePadH, badgeY + badgeHeight - badgePadV - 1f * density, freqTextPaint)
+                    badgeX += badgeWidth + 6f * density
+                }
+            }
+
+            // Draw JPDB badge
+            entry.jpdbBadge?.let { badge ->
+                val jpdbColor = entry.jpdbBadgeColor
+                val badgePadH = 6f * density
+                val badgePadV = 2f * density
+                val badgeWidth = frequencyBadgePaint.measureText(badge) + badgePadH * 2
+                val badgeHeight = frequencyBadgePaint.textSize + badgePadV * 2
+
+                if (badgeX + badgeWidth <= maxContentX) {
+                    val badgeY = y - headwordPaint.textSize + (headwordPaint.textSize - badgeHeight) / 2
+                    val jpdbBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        color = Color.argb((40 * alpha).toInt(), Color.red(jpdbColor), Color.green(jpdbColor), Color.blue(jpdbColor))
+                    }
+                    val badgeRect = RectF(badgeX, badgeY, badgeX + badgeWidth, badgeY + badgeHeight)
+                    canvas.drawRoundRect(badgeRect, badgeHeight / 2, badgeHeight / 2, jpdbBgPaint)
+                    val jpdbTextPaint = Paint(frequencyBadgePaint).apply {
+                        color = Color.argb((220 * alpha).toInt(), Color.red(jpdbColor), Color.green(jpdbColor), Color.blue(jpdbColor))
+                    }
+                    canvas.drawText(badge, badgeX + badgePadH, badgeY + badgeHeight - badgePadV - 1f * density, jpdbTextPaint)
                     badgeX += badgeWidth + 6f * density
                 }
             }
@@ -593,10 +729,10 @@ class OverlayTextView(
 
                 if (badgeX + badgeWidth <= maxContentX) {
                     val badgeY = y - headwordPaint.textSize + (headwordPaint.textSize - badgeHeight) / 2
-                    val nameBgPaint = Paint(nameBadgeBgPaint).apply { this.alpha = (alpha * 255).toInt() }
+                    val nameBgPaint = Paint(nameBadgeBgPaint).apply { this.alpha = (40 * alpha).toInt() }
                     val badgeRect = RectF(badgeX, badgeY, badgeX + badgeWidth, badgeY + badgeHeight)
                     canvas.drawRoundRect(badgeRect, badgeHeight / 2, badgeHeight / 2, nameBgPaint)
-                    val nameTextPaint = Paint(nameBadgePaint).apply { this.alpha = (alpha * 255).toInt() }
+                    val nameTextPaint = Paint(nameBadgePaint).apply { this.alpha = (220 * alpha).toInt() }
                     canvas.drawText(label, badgeX + badgePadH, badgeY + badgeHeight - badgePadV - 1f * density, nameTextPaint)
                 }
             }
@@ -607,6 +743,26 @@ class OverlayTextView(
             if (entry.reading.isNotEmpty() && entry.reading != entry.expression) {
                 y += readingPaint.textSize + 2f * density
                 canvas.drawText(entry.reading, finalX + paddingH, y, readPaint)
+            }
+
+            // Draw pitch accent contour
+            entry.pitchDownstep?.let { downstep ->
+                val reading = if (entry.reading.isNotEmpty()) entry.reading else entry.expression
+                val morae = splitMorae(reading)
+                if (morae.isNotEmpty()) {
+                    y += 4f * density
+                    drawPitchContour(canvas, morae, downstep, finalX + paddingH, y, alpha)
+                    y += 20f * density
+                }
+            }
+
+            // Draw POS label
+            entry.posDisplayLabel?.let { posLabel ->
+                y += posTagPaint.textSize + 4f * density
+                val posText = if (posLabel.length > 40) posLabel.take(40) + "…" else posLabel
+                val posAlpha = alpha
+                val posPaint = Paint(posTagPaint).apply { this.alpha = (200 * posAlpha).toInt() }
+                canvas.drawText(posText, finalX + paddingH, y, posPaint)
             }
 
             // Draw deinflection path
@@ -668,6 +824,18 @@ class OverlayTextView(
             )
             canvas.drawRoundRect(scrollBarRect, scrollBarWidth / 2, scrollBarWidth / 2, scrollBarPaint)
         }
+    }
+
+    override fun onGenericMotionEvent(event: MotionEvent): Boolean {
+        val source = event.source
+        if ((source and InputDevice.SOURCE_JOYSTICK) != 0 ||
+            (source and InputDevice.SOURCE_GAMEPAD) != 0) {
+            val service = YomidroidAccessibilityService.instance
+            if (service != null) {
+                return service.handleJoystickMotionFromView(event)
+            }
+        }
+        return super.onGenericMotionEvent(event)
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -754,10 +922,14 @@ class OverlayTextView(
 
                 // Tap is outside text regions
                 // If showing popup/no-results, close it first
-                if (currentDefinitions.isNotEmpty() || showingNoResults) {
+                if (currentDefinitions.isNotEmpty() || showingNoResults || richPopupActive) {
                     currentDefinitions = emptyList()
                     selectedDefinitionIndex = 0
                     showingNoResults = false
+                    if (richPopupActive) {
+                        richPopupActive = false
+                        onDismissRichPopup?.invoke()
+                    }
                     selectedResult = null
                     selectedCharIndex = -1
                     popupScrollY = 0f
@@ -777,6 +949,17 @@ class OverlayTextView(
     }
 
     /**
+     * Get the overlay window's offset from the screen origin.
+     * Non-zero when the overlay doesn't cover the full screen (e.g., status bar offset).
+     * Used to convert between screen coordinates and overlay-local coordinates.
+     */
+    private fun getOverlayOffset(): Pair<Float, Float> {
+        val loc = IntArray(2)
+        getLocationOnScreen(loc)
+        return loc[0].toFloat() to loc[1].toFloat()
+    }
+
+    /**
      * Find which character index a screen coordinate maps to.
      * Converts screen coordinates back to bitmap space (reverse of toScreenCoords),
      * then checks which character bounding box contains that point.
@@ -785,23 +968,75 @@ class OverlayTextView(
      * 1. Exact match: point is inside character bounds
      * 2. X-range fallback: for slight Y misalignment (common with vertical text)
      *
+     * @param result The OCR result to search within
+     * @param screenX X coordinate in screen space
+     * @param screenY Y coordinate in screen space
+     * @param overlayOffsetX Overlay window X offset from screen origin
+     * @param overlayOffsetY Overlay window Y offset from screen origin
      * @return Character index, or -1 if cursor is not over any character
      */
-    private fun getCharIndexAt(result: OcrResult, screenX: Float, screenY: Float): Int {
-        // Convert screen coordinates to bitmap/OCR coordinate space (reverse the scale)
-        val bitmapX = screenX / scaleX
-        val bitmapY = screenY / scaleY
+    /**
+     * Find which character index a coordinate maps to.
+     *
+     * Coordinate handling:
+     * - When called from onTouchEvent: coords are view-local, overlayOffsetX/Y = 0 (default)
+     *   → screen = viewLocal + overlayLocation → bitmap = screen / scale
+     * - When called from findTextAtCursor: coords are screen space, overlayOffsetX/Y are provided
+     *   → bitmap = coords / scale (offset cancels out)
+     */
+    private fun getCharIndexAt(
+        result: OcrResult,
+        inputX: Float,
+        inputY: Float,
+        overlayOffsetX: Float = 0f,
+        overlayOffsetY: Float = 0f
+    ): Int {
+        // Convert to screen coordinates first
+        val loc = IntArray(2)
+        getLocationOnScreen(loc)
 
-        // Pass 1: Direct coordinate matching
+        // If overlayOffset is provided (> 0), input is screen coords: screen = input
+        // If overlayOffset is 0 (from onTouchEvent), input is view-local: screen = input + loc
+        val screenCoordX: Float
+        val screenCoordY: Float
+        if (overlayOffsetX != 0f || overlayOffsetY != 0f) {
+            // Caller provided screen coords with explicit offset
+            screenCoordX = inputX
+            screenCoordY = inputY
+        } else {
+            // Touch event: view-local → screen
+            screenCoordX = inputX + loc[0].toFloat()
+            screenCoordY = inputY + loc[1].toFloat()
+        }
+
+        // Screen → bitmap
+        val bitmapX = screenCoordX / scaleX
+        val bitmapY = screenCoordY / scaleY
+
+        // Nearest-center matching: find the character whose center is closest to the tap point.
+        // This avoids the right-leaning bias of bounds-containment when character bounding boxes
+        // are wider than the visual glyphs.
+        var bestIndex = -1
+        var bestDist = Float.MAX_VALUE
+
         for ((index, bounds) in result.charBounds.withIndex()) {
-            if (bounds.contains(bitmapX.toInt(), bitmapY.toInt())) {
-                return index
+            val centerX = (bounds.left + bounds.right) / 2f
+            val centerY = (bounds.top + bounds.bottom) / 2f
+            val dx = bitmapX - centerX
+            val dy = bitmapY - centerY
+            val dist = dx * dx + dy * dy
+            if (dist < bestDist) {
+                bestDist = dist
+                bestIndex = index
             }
         }
-        // Pass 2: X-range fallback for slight Y misalignment
-        for ((index, bounds) in result.charBounds.withIndex()) {
-            if (bitmapX >= bounds.left && bitmapX <= bounds.right) {
-                return index
+
+        // Only accept if within reasonable distance (1.5x the average char width)
+        if (bestIndex >= 0 && result.charBounds.isNotEmpty()) {
+            val avgWidth = result.charBounds.sumOf { (it.right - it.left).toDouble() }.toFloat() / result.charBounds.size
+            val maxAcceptDist = avgWidth * 1.5f
+            if (kotlin.math.sqrt(bestDist) <= maxAcceptDist) {
+                return bestIndex
             }
         }
         return -1
@@ -848,8 +1083,11 @@ class OverlayTextView(
      * Show multiple dictionary definitions with navigation support.
      */
     fun showDefinitions(entries: List<DictionaryEntry>, charIndex: Int) {
-        // Save previous entry to history if it was open for 1+ second
-        maybeSaveToHistory()
+        val newExpression = entries.firstOrNull()?.expression
+        if (newExpression != lastSavedExpression || lastShownEntry == null) {
+            // Save previous word if viewed for 500ms+
+            maybeSaveToHistory()
+        }
 
         showingNoResults = false
         currentDefinitions = entries
@@ -885,8 +1123,15 @@ class OverlayTextView(
             return
         }
 
-        // Save previous entry to history if it was open for 1+ second
-        maybeSaveToHistory()
+        val newExpression = entries.firstOrNull()?.expression
+        if (newExpression != lastSavedExpression || lastShownEntry == null) {
+            // Save previous word if viewed for 500ms+
+            maybeSaveToHistory()
+        }
+
+        // Store cursor position for smart popup placement
+        val (_, offsetY) = getOverlayOffset()
+        lastCursorY = cursorY - offsetY
 
         showingNoResults = false
         currentDefinitions = entries
@@ -899,23 +1144,20 @@ class OverlayTextView(
         lastShownEntry = currentDefinition
         lastShownSentence = selectedResult?.text ?: ""
 
-        // Position popup above the selected text, centered over all matched characters
+        // Position popup centered over matched text horizontally
         val firstBounds = selectedResult?.charBounds?.getOrNull(selectedCharIndex)
         val lastBounds = selectedResult?.charBounds?.getOrNull(selectedCharIndex + selectedMatchLength - 1)
 
         if (firstBounds != null && lastBounds != null) {
-            // Center horizontally over all matched chars (with scale applied)
             val centerX = (firstBounds.left + lastBounds.right) / 2f * scaleX
             popupX = centerX
-            popupY = firstBounds.top * scaleY  // Above the text
         } else if (firstBounds != null) {
             popupX = firstBounds.centerX() * scaleX
-            popupY = firstBounds.top * scaleY
         } else {
-            // Fallback to cursor position
             popupX = cursorX
-            popupY = cursorY
         }
+        // popupY is set dynamically in drawDefinitionsList based on lastCursorY
+        popupY = lastCursorY
         animatePopupIn()
     }
 
@@ -928,7 +1170,7 @@ class OverlayTextView(
     }
 
     fun hideDefinition() {
-        // Save to history if popup was open for 1+ second
+        // Save to history if popup was open for 500ms+
         maybeSaveToHistory()
 
         animatePopupOut {
@@ -942,16 +1184,17 @@ class OverlayTextView(
     }
 
     /**
-     * Check if the popup was open for 1+ second and save to history if so.
+     * Check if the popup was open for 500ms+ and save to history if so.
+     * Uses lastSavedExpression to avoid re-saving the same word on cursor micro-movements.
      */
     private fun maybeSaveToHistory() {
         val entry = lastShownEntry ?: return
         if (popupOpenTime <= 0) return
 
         val elapsed = System.currentTimeMillis() - popupOpenTime
-        if (elapsed >= 1000) {
-            // Popup was open for 1+ second, save to history
+        if (elapsed >= 500 && entry.expression != lastSavedExpression) {
             onSaveToHistory?.invoke(entry, lastShownSentence)
+            lastSavedExpression = entry.expression
         }
 
         // Reset tracking
@@ -1026,8 +1269,11 @@ class OverlayTextView(
         matchLength: Int,
         context: UnifiedOcrContext
     ) {
-        // Save previous entry to history if it was open for 1+ second
-        maybeSaveToHistory()
+        val newExpression = entries.firstOrNull()?.expression
+        if (newExpression != lastSavedExpression || lastShownEntry == null) {
+            // Save previous word if viewed for 500ms+
+            maybeSaveToHistory()
+        }
 
         // Set up cross-line highlighting
         setHighlightFromUnified(context, unifiedStartIndex, matchLength)
@@ -1090,14 +1336,88 @@ class OverlayTextView(
     }
 
     /**
+     * Programmatic popup scroll for hardware button input.
+     * Positive deltaY scrolls down, negative scrolls up.
+     */
+    fun scrollBy(deltaY: Float) {
+        if (popupContentHeight <= popupVisibleHeight) return
+        val maxScroll = popupContentHeight - popupVisibleHeight
+        popupScrollY = (popupScrollY + deltaY).coerceIn(0f, maxScroll)
+        invalidate()
+    }
+
+    /**
+     * Whether the popup is currently visible (has definitions or no-results).
+     */
+    fun isPopupVisible(): Boolean = currentDefinitions.isNotEmpty() || showingNoResults
+
+    /**
+     * Whether the popup has scrollable content.
+     */
+    fun isPopupScrollable(): Boolean = popupContentHeight > popupVisibleHeight
+
+    /**
+     * Dismiss the popup (definitions or no-results) without dismissing the overlay.
+     */
+    fun dismissPopup() {
+        if (currentDefinitions.isNotEmpty() || showingNoResults) {
+            maybeSaveToHistory()
+            currentDefinitions = emptyList()
+            selectedDefinitionIndex = 0
+            showingNoResults = false
+            selectedResult = null
+            selectedCharIndex = -1
+            popupScrollY = 0f
+            popupBounds = null
+            ankiButtonBoundsList.clear()
+            ankiButtonStates.clear()
+            invalidate()
+        }
+    }
+
+    /**
+     * Get the screen-space center points of all OCR text blocks.
+     * Used for block-based cursor navigation (jump between text regions).
+     * Returns list of (centerX, centerY) in screen coordinates.
+     */
+    fun getOcrBlockCenters(): List<Pair<Float, Float>> {
+        return adjustedResults.map { (_, bounds) ->
+            bounds.centerX() to bounds.centerY()
+        }
+    }
+
+    /**
+     * Get all character center positions grouped by OCR line (row).
+     * Each row is sorted left-to-right; rows are sorted top-to-bottom.
+     * Returns screen coordinates (including overlay offset).
+     */
+    fun getCharacterGrid(): List<List<Pair<Float, Float>>> {
+        val (offsetX, offsetY) = getOverlayOffset()
+        val sorted = adjustedResults.sortedBy { it.first.lineBounds.top }
+        return sorted.mapNotNull { (result, _) ->
+            val chars = result.charBounds.map { b ->
+                (b.centerX() * scaleX + offsetX) to (b.centerY() * scaleY + offsetY)
+            }
+            chars.ifEmpty { null }
+        }
+    }
+
+    /**
      * Find OCR result and char index at cursor position (for cursor-based lookup).
-     * Cursor coordinates are in screen space, OCR bounds are also in screen space.
+     * Cursor coordinates are in screen space. Accounts for overlay window offset
+     * (e.g., status bar) when converting to overlay-local coordinates for hit testing.
      * Returns null if cursor is not over any text.
      */
     fun findTextAtCursor(cursorX: Float, cursorY: Float): Triple<OcrResult, Int, RectF>? {
+        val (offsetX, offsetY) = getOverlayOffset()
+
+        // Convert cursor screen coords to overlay-local coords for bounds checking
+        val localX = cursorX - offsetX
+        val localY = cursorY - offsetY
+
         for ((result, bounds) in adjustedResults) {
-            if (bounds.contains(cursorX, cursorY)) {
-                val charIndex = getCharIndexAt(result, cursorX, cursorY)
+            if (bounds.contains(localX, localY)) {
+                val charIndex = getCharIndexAt(result, cursorX, cursorY, offsetX, offsetY)
                 if (charIndex >= 0) {
                     selectedResult = result
                     selectedCharIndex = charIndex
@@ -1110,13 +1430,17 @@ class OverlayTextView(
 
     /**
      * Highlight the character at cursor position without triggering lookup callback.
-     * Cursor coordinates are in screen space, OCR bounds are also in screen space.
+     * Cursor coordinates are in screen space. Accounts for overlay window offset.
      * Used for visual feedback during cursor-based navigation.
      */
     fun highlightAtCursor(cursorX: Float, cursorY: Float): Pair<String, Int>? {
+        val (offsetX, offsetY) = getOverlayOffset()
+        val localX = cursorX - offsetX
+        val localY = cursorY - offsetY
+
         for ((result, bounds) in adjustedResults) {
-            if (bounds.contains(cursorX, cursorY)) {
-                val charIndex = getCharIndexAt(result, cursorX, cursorY)
+            if (bounds.contains(localX, localY)) {
+                val charIndex = getCharIndexAt(result, cursorX, cursorY, offsetX, offsetY)
                 if (charIndex >= 0) {
                     selectedResult = result
                     selectedCharIndex = charIndex
@@ -1200,6 +1524,107 @@ class OverlayTextView(
         loadingAnimator?.cancel()
         loadingAnimator = null
         loadingAngle = 0f
+    }
+
+    /**
+     * Split a Japanese reading into morae (syllable units).
+     * Handles small kana (ゃゅょぁぃぅぇぉ) as part of the previous mora.
+     */
+    private fun splitMorae(reading: String): List<String> {
+        val smallKana = setOf(
+            'ゃ', 'ゅ', 'ょ', 'ぁ', 'ぃ', 'ぅ', 'ぇ', 'ぉ',
+            'ャ', 'ュ', 'ョ', 'ァ', 'ィ', 'ゥ', 'ェ', 'ォ'
+        )
+        val morae = mutableListOf<String>()
+        var i = 0
+        while (i < reading.length) {
+            val sb = StringBuilder()
+            sb.append(reading[i])
+            i++
+            // Absorb following small kana
+            while (i < reading.length && reading[i] in smallKana) {
+                sb.append(reading[i])
+                i++
+            }
+            morae.add(sb.toString())
+        }
+        return morae
+    }
+
+    /**
+     * Draw pitch accent contour visualization.
+     * Shows morae with a line indicating pitch pattern (high/low).
+     *
+     * @param downstep 0 = heiban (flat), 1 = atamadaka, n = odaka/nakadaka
+     */
+    private fun drawPitchContour(
+        canvas: Canvas,
+        morae: List<String>,
+        downstep: Int,
+        startX: Float,
+        startY: Float,
+        alpha: Float
+    ) {
+        val moraWidth = 14f * density
+        val highY = startY
+        val lowY = startY + 14f * density
+        val dotRadius = 2.5f * density
+
+        val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb((180 * alpha).toInt(), 130, 180, 255)
+            style = Paint.Style.STROKE
+            strokeWidth = 1.5f * density
+            strokeCap = Paint.Cap.ROUND
+        }
+        val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb((220 * alpha).toInt(), 130, 180, 255)
+            style = Paint.Style.FILL
+        }
+        val moraPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb((160 * alpha).toInt(), 200, 200, 200)
+            textSize = 10f * density
+            textAlign = Paint.Align.CENTER
+        }
+
+        // Determine pitch for each mora
+        val isHigh = BooleanArray(morae.size) { i ->
+            when {
+                downstep == 0 -> i > 0  // Heiban: low then all high
+                downstep == 1 -> i == 0  // Atamadaka: high then all low
+                else -> i > 0 && i < downstep  // Nakadaka/Odaka: low, high until drop
+            }
+        }
+
+        // Draw connecting lines and dots
+        for (i in morae.indices) {
+            val cx = startX + i * moraWidth + moraWidth / 2
+            val cy = if (isHigh[i]) highY else lowY
+
+            // Draw dot
+            canvas.drawCircle(cx, cy, dotRadius, dotPaint)
+
+            // Draw line to next mora
+            if (i < morae.size - 1) {
+                val nextCy = if (isHigh[i + 1]) highY else lowY
+                val nextCx = startX + (i + 1) * moraWidth + moraWidth / 2
+                canvas.drawLine(cx, cy, nextCx, nextCy, linePaint)
+            }
+
+            // Draw mora text below
+            canvas.drawText(morae[i], cx, lowY + moraPaint.textSize + 2f * density, moraPaint)
+        }
+
+        // Draw downstep marker (red circle) at the drop point
+        if (downstep > 0 && downstep <= morae.size) {
+            val dropX = startX + (downstep - 1) * moraWidth + moraWidth / 2
+            val dropY = highY
+            val dropPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.argb((200 * alpha).toInt(), 244, 67, 54)
+                style = Paint.Style.STROKE
+                strokeWidth = 1.5f * density
+            }
+            canvas.drawCircle(dropX, dropY, dotRadius + 2f * density, dropPaint)
+        }
     }
 
     /**

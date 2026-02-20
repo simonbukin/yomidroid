@@ -12,6 +12,7 @@ object OcrEngineFactory {
         return when (type) {
             OcrEngineType.ML_KIT -> MlKitOcrEngine()
             OcrEngineType.RAPID_OCR -> RapidOcrEngine(context)
+            OcrEngineType.MANGA_OCR -> MangaOcrEngine(context)
         }
     }
 

@@ -1,0 +1,425 @@
+/* ============================================================
+   Yomidroid Popup — CSS design system
+   ============================================================ */
+
+/* --- Design tokens (dark default) --- */
+:root {
+    --font-size: 14px;
+    --line-height: 1.43;
+    --headword-font-size: 2em;
+    --reading-font-size: 1em;
+    --entry-v-padding: 0.6em;
+    --entry-h-padding: 0.6em;
+    --list-padding: 1.4em;
+    --thin-border-size: calc(1em / 14);
+    --tag-font-size: 0.65em;
+    --tag-border-radius: 0.25em;
+    --tag-padding: 0.15em 0.4em;
+    --entry-indicator-width: 3px;
+    --pitch-high-color: #e53935;
+    --pitch-low-color: var(--accent-color);
+    --pitch-line-color: var(--accent-color);
+}
+
+[data-theme="dark"] {
+    --bg-color: #141419;
+    --text-color: #f0f0f0;
+    --rt-color: #aaa;
+    --border-color: rgba(255,255,255,0.15);
+    --light-border-color: rgba(255,255,255,0.1);
+    --link-color: #82b4ff;
+    --accent-color: #82b4ff;
+    --reason-text-color: #b48cff;
+    --tag-default-bg: #555;
+    --tag-default-color: #fff;
+    --entry-indicator-color: #82b4ff;
+    --source-label-color: rgba(255,255,255,0.3);
+    --tag-pos-bg: #565694;
+    --tag-pos-color: #fff;
+    --tag-name-bg: #8a653a;
+    --tag-name-color: #fff;
+    --tag-popular-bg: #7c4dff;
+    --tag-popular-color: #fff;
+    --tag-frequent-bg: #388e3c;
+    --tag-frequent-color: #fff;
+    --tag-archaism-bg: #e65100;
+    --tag-archaism-color: #fff;
+    --tag-expression-bg: #00838f;
+    --tag-expression-color: #fff;
+    --tag-dictionary-bg: #444;
+    --tag-dictionary-color: #ccc;
+    --frequency-badge-bg: #2e7d32;
+    --frequency-badge-color: #fff;
+}
+
+[data-theme="light"] {
+    --bg-color: #ffffff;
+    --text-color: #1a1a1a;
+    --rt-color: #666;
+    --border-color: rgba(0,0,0,0.12);
+    --light-border-color: rgba(0,0,0,0.08);
+    --link-color: #1a73e8;
+    --accent-color: #1a73e8;
+    --reason-text-color: #7b1fa2;
+    --tag-default-bg: #888;
+    --tag-default-color: #fff;
+    --entry-indicator-color: #1a73e8;
+    --source-label-color: rgba(0,0,0,0.35);
+    --tag-pos-bg: #565694;
+    --tag-pos-color: #fff;
+    --tag-name-bg: #d4915b;
+    --tag-name-color: #fff;
+    --tag-popular-bg: #7c4dff;
+    --tag-popular-color: #fff;
+    --tag-frequent-bg: #4caf50;
+    --tag-frequent-color: #fff;
+    --tag-archaism-bg: #ff9800;
+    --tag-archaism-color: #fff;
+    --tag-expression-bg: #00acc1;
+    --tag-expression-color: #fff;
+    --tag-dictionary-bg: #bbb;
+    --tag-dictionary-color: #fff;
+    --frequency-badge-bg: #4caf50;
+    --frequency-badge-color: #fff;
+}
+
+/* --- Reset --- */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    font-family: -apple-system, 'Noto Sans JP', 'Hiragino Sans', sans-serif;
+    font-size: var(--font-size);
+    line-height: var(--line-height);
+    color: var(--text-color);
+    background: var(--bg-color);
+    -webkit-text-size-adjust: none;
+    overflow-x: hidden;
+}
+
+/* ============================================================
+   Entry
+   ============================================================ */
+.entry {
+    position: relative;
+    padding: var(--entry-v-padding) var(--entry-h-padding);
+    padding-left: calc(var(--entry-h-padding) + var(--entry-indicator-width));
+}
+.entry + .entry {
+    border-top: var(--thin-border-size) solid var(--light-border-color);
+}
+
+/* Current-entry left indicator */
+.entry::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 0;
+    background: var(--entry-indicator-color);
+    transition: width 0.15s ease;
+}
+.entry.entry-current::before {
+    width: var(--entry-indicator-width);
+}
+
+/* ============================================================
+   Top row: expression + badges + anki button
+   ============================================================ */
+.entry-top-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.3em;
+    margin-bottom: 0.1em;
+}
+
+.headword-term {
+    font-size: var(--headword-font-size);
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+/* Star badge (purple circle with yellow star) */
+.star-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.6em;
+    width: 1.6em;
+    height: 1.6em;
+    border-radius: 50%;
+    background: #7c4dff;
+    color: #ffd600;
+    vertical-align: super;
+    margin-left: -0.05em;
+}
+
+/* Anki button pushed to right */
+.anki-btn {
+    margin-left: auto;
+}
+
+/* ============================================================
+   Reading row: reading + pitch accent
+   ============================================================ */
+.reading-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
+    margin-bottom: 0.15em;
+}
+
+.headword-reading {
+    font-size: var(--reading-font-size);
+    color: var(--rt-color);
+}
+
+/* ============================================================
+   Action buttons (Anki)
+   ============================================================ */
+.action-btn {
+    background: none;
+    border: 1.5px solid var(--accent-color);
+    color: var(--accent-color);
+    width: 30px;
+    height: 30px;
+    border-radius: 6px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.action-btn:active {
+    background: rgba(130,180,255,0.25);
+}
+.action-btn.exported {
+    border-color: #4caf50;
+    color: #4caf50;
+    background: rgba(76,175,80,0.1);
+}
+
+/* ============================================================
+   Inflection rules
+   ============================================================ */
+.inflection-rule-chain {
+    color: var(--reason-text-color);
+    font-size: 0.857em;
+    font-style: italic;
+    margin: 0.1em 0;
+}
+
+/* ============================================================
+   Tags
+   ============================================================ */
+.tag {
+    display: inline-flex;
+    align-items: center;
+    font-size: var(--tag-font-size);
+    font-weight: 600;
+    padding: var(--tag-padding);
+    border-radius: var(--tag-border-radius);
+    line-height: 1.4;
+    white-space: nowrap;
+    background: var(--tag-default-bg);
+    color: var(--tag-default-color);
+}
+.tag[data-category="partOfSpeech"] {
+    background: var(--tag-pos-bg);
+    color: var(--tag-pos-color);
+}
+.tag[data-category="name"] {
+    background: var(--tag-name-bg);
+    color: var(--tag-name-color);
+}
+.tag[data-category="dictionary"] {
+    background: var(--tag-dictionary-bg);
+    color: var(--tag-dictionary-color);
+}
+.tag[data-category="popular"] {
+    background: var(--tag-popular-bg);
+    color: var(--tag-popular-color);
+}
+.tag[data-category="frequent"] {
+    background: var(--tag-frequent-bg);
+    color: var(--tag-frequent-color);
+}
+.tag[data-category="archaism"] {
+    background: var(--tag-archaism-bg);
+    color: var(--tag-archaism-color);
+}
+.tag[data-category="expression"] {
+    background: var(--tag-expression-bg);
+    color: var(--tag-expression-color);
+}
+
+/* ============================================================
+   Frequency section
+   ============================================================ */
+.frequency-section {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 0.3em;
+}
+.frequency-tag {
+    display: inline-flex;
+    align-items: center;
+    font-size: var(--tag-font-size);
+    font-weight: 600;
+    padding: var(--tag-padding);
+    border-radius: var(--tag-border-radius);
+    line-height: 1.4;
+    white-space: nowrap;
+}
+.frequency-label {
+    opacity: 0.7;
+    margin-right: 0.3em;
+}
+
+/* ============================================================
+   Pitch accent
+   ============================================================ */
+.pronunciation-section {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.3em;
+}
+.pronunciation-group {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+}
+.pitch-text {
+    font-size: 0.857em;
+    color: var(--rt-color);
+}
+.pitch-downstep-num {
+    font-size: 0.75em;
+    color: var(--accent-color);
+    font-weight: 600;
+    margin-left: 0.2em;
+}
+.pitch-graph { display: inline-block; vertical-align: middle; }
+
+/* ============================================================
+   Entry body / definitions
+   ============================================================ */
+.entry-body {
+    margin-top: 0.2em;
+}
+
+.definition-list {
+    padding-left: var(--list-padding);
+    margin: 0.2em 0;
+    list-style-type: decimal;
+}
+.definition-list[data-count="0"],
+.definition-list[data-count="1"] {
+    list-style: none;
+    padding-left: 0;
+}
+.definition-item {
+    display: list-item;
+    position: relative;
+    margin-bottom: 0.2em;
+}
+.definition-item:last-child { margin-bottom: 0; }
+.definition-item::marker { color: var(--rt-color); }
+
+.gloss-content {
+    display: block;
+    white-space: pre-line;
+}
+.gloss-content-inline {
+    display: inline;
+    white-space: normal;
+}
+.gloss-item { display: inline; }
+.gloss-separator { color: var(--rt-color); }
+
+/* Definition sections (grouped entries from multiple dicts) */
+.definition-section {
+    margin-bottom: 0.4em;
+}
+.definition-section:last-child { margin-bottom: 0; }
+.per-def-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.2em;
+    margin-bottom: 0.2em;
+}
+.definition-source-label {
+    font-size: 0.714em;
+    font-weight: 600;
+    color: var(--accent-color);
+    opacity: 0.7;
+    margin-bottom: 0.1em;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+}
+.section-toggle {
+    display: inline-block;
+    width: 0.9em;
+    text-align: center;
+    font-size: 1.1em;
+    vertical-align: baseline;
+}
+.section-content.collapsed {
+    display: none;
+}
+
+/* ============================================================
+   Structured content (Yomitan tag elements)
+   ============================================================ */
+ruby { ruby-align: center; }
+rt { font-size: 0.55em; color: var(--rt-color); font-weight: 400; }
+rp { display: none; }
+.headword-term ruby rt { font-size: 0.45em; }
+
+.sc-ol, .sc-ul { padding-left: var(--list-padding); margin: 0.2em 0; }
+.sc-li { margin-bottom: 0.2em; }
+
+.sc-table-container { overflow-x: auto; margin: 0.3em 0; }
+.sc-table, table.sc-table {
+    border-collapse: collapse;
+    font-size: 0.9em;
+    width: 100%;
+}
+.sc-th, .sc-td, th.sc-th, td.sc-td {
+    border: 1px solid var(--border-color);
+    padding: 0.2em 0.4em;
+    text-align: left;
+}
+.sc-th, th.sc-th {
+    background: var(--tag-default-bg);
+    font-weight: 600;
+}
+
+.sc-details { margin: 0.2em 0; }
+.sc-summary {
+    cursor: pointer;
+    color: var(--accent-color);
+    font-weight: 500;
+}
+
+a, .sc-a {
+    color: var(--link-color);
+    text-decoration: none;
+}
+
+.img-placeholder {
+    font-size: 0.786em;
+    color: var(--rt-color);
+    font-style: italic;
+}
+.sc-img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 0.2em;
+    margin: 0.2em 0;
+    vertical-align: middle;
+}

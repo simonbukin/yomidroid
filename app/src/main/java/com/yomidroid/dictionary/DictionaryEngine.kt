@@ -69,7 +69,7 @@ class DictionaryEngine(context: Context) {
                 .thenBy { it.source == DictionarySource.JMNEDICT }  // Names last
                 .thenByDescending { it.score }                       // Score first (particles have high scores)
                 .thenBy { it.frequencyRank ?: Int.MAX_VALUE }        // Then frequency
-        ).distinctBy { "${it.expression}|${it.reading}|${it.source}" }
+        ).distinctBy { "${it.expression}|${it.reading}|${it.sourceDictId}" }
     }
 
     /**
@@ -134,6 +134,31 @@ class DictionaryEngine(context: Context) {
     }
 
     /**
+     * Search for a term with deinflection but without progressive substring shortening.
+     * Suitable for search box UI — looks up the full query and its deinflected forms only.
+     */
+    suspend fun searchTerm(query: String): List<DictionaryEntry> = withContext(Dispatchers.IO) {
+        if (query.isBlank()) return@withContext emptyList()
+
+        val results = mutableListOf<DictionaryEntry>()
+        val variants = transformer.getVariants(query)
+
+        for (variant in variants) {
+            val entities = dictionaryDb.findByExpressionOrReading(variant.text)
+            for (entity in entities) {
+                results.add(entityToEntry(entity, query, variant))
+            }
+        }
+
+        results.sortedWith(
+            compareByDescending<DictionaryEntry> { it.expression == query || it.reading == query }
+                .thenBy { it.source == DictionarySource.JMNEDICT }
+                .thenByDescending { it.score }
+                .thenBy { it.frequencyRank ?: Int.MAX_VALUE }
+        ).distinctBy { "${it.expression}|${it.reading}|${it.sourceDictId}" }
+    }
+
+    /**
      * Find exact match for a term (no deinflection)
      */
     suspend fun findExact(term: String): List<DictionaryEntry> = withContext(Dispatchers.IO) {
@@ -172,7 +197,7 @@ class DictionaryEngine(context: Context) {
             gson.fromJson<List<String>>(entity.partsOfSpeech, type) ?: emptyList()
         } catch (e: Exception) {
             if (entity.partsOfSpeech.isNotEmpty()) {
-                entity.partsOfSpeech.split(",").map { it.trim() }
+                entity.partsOfSpeech.split(Regex("[,\\s]+")).map { it.trim() }.filter { it.isNotEmpty() }
             } else {
                 emptyList()
             }
@@ -196,7 +221,16 @@ class DictionaryEngine(context: Context) {
             deinflectionPath = deinflectionPath,
             source = DictionarySource.fromString(entity.source),
             nameType = NameType.fromString(entity.nameType),
-            frequencyRank = entity.frequencyRank
+            frequencyRank = entity.frequencyRank,
+            jpdbRank = entity.jpdbRank,
+            pitchDownstep = entity.pitchDownstep,
+            pitchDownsteps = entity.pitchDownsteps,
+            sourceDictId = entity.sourceDictId,
+            dictionaryTitle = entity.dictionaryTitle,
+            additionalFrequencies = entity.additionalFrequencies,
+            glossaryRich = entity.glossaryRich,
+            definitionTags = entity.tagMeta.keys.toList(),
+            tagMeta = entity.tagMeta
         )
     }
 }

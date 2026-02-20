@@ -3,16 +3,14 @@ package com.yomidroid.data
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.io.File
 
 /**
- * Handles loading the dictionary database from assets on first launch.
+ * Handles checking dictionary availability.
  */
 object DictionaryLoader {
 
     /**
-     * Check if dictionary is available and can be loaded.
-     * This triggers the copy from assets if needed.
+     * Check if any dictionary is available and loaded.
      */
     suspend fun ensureDictionaryLoaded(context: Context): Boolean = withContext(Dispatchers.IO) {
         try {
@@ -25,21 +23,13 @@ object DictionaryLoader {
     }
 
     /**
-     * Check if the bundled dictionary exists in assets.
+     * Check if any dictionaries are installed.
      */
-    fun hasBundledDictionary(context: Context): Boolean {
+    fun hasDictionaries(context: Context): Boolean {
         return try {
-            context.assets.open("dictionary.db").close()
-            true
+            DictionaryDb.getInstance(context).isValid()
         } catch (e: Exception) {
             false
         }
-    }
-
-    /**
-     * Get the path where the dictionary is stored.
-     */
-    fun getDictionaryPath(context: Context): File {
-        return DictionaryDb.getDatabasePath(context)
     }
 }

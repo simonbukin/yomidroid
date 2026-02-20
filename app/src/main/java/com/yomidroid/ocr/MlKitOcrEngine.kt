@@ -45,20 +45,42 @@ class MlKitOcrEngine : OcrEngine {
                 val lineText = line.text
                 val charBounds = mutableListOf<Rect>()
 
+                // Collect symbol texts and bounds together
+                val symbolTexts = mutableListOf<String>()
+                val symbolBounds = mutableListOf<Rect>()
                 for (element in line.elements) {
                     for (symbol in element.symbols) {
-                        symbol.boundingBox?.let { charBounds.add(it) }
+                        val bb = symbol.boundingBox ?: continue
+                        symbolTexts.add(symbol.text)
+                        symbolBounds.add(bb)
                     }
                 }
 
-                if (charBounds.size == lineText.length) {
-                    line.boundingBox?.let { lineBounds ->
-                        results.add(OcrResult(lineText, lineBounds, charBounds))
+                if (symbolBounds.isEmpty()) continue
+
+                // Build per-character bounds by expanding multi-char symbols
+                // ML Kit may report a symbol like "ニュ" with a single bounding box
+                for (i in symbolTexts.indices) {
+                    val symText = symbolTexts[i]
+                    val bounds = symbolBounds[i]
+                    if (symText.length <= 1) {
+                        charBounds.add(bounds)
+                    } else {
+                        // Split the bounding box evenly across characters
+                        val charWidth = bounds.width() / symText.length
+                        for (c in symText.indices) {
+                            charBounds.add(Rect(
+                                bounds.left + c * charWidth,
+                                bounds.top,
+                                bounds.left + (c + 1) * charWidth,
+                                bounds.bottom
+                            ))
+                        }
                     }
-                } else if (charBounds.isNotEmpty()) {
-                    line.boundingBox?.let { lineBounds ->
-                        results.add(OcrResult(lineText, lineBounds, charBounds))
-                    }
+                }
+
+                line.boundingBox?.let { lineBounds ->
+                    results.add(OcrResult(lineText, lineBounds, charBounds))
                 }
             }
         }

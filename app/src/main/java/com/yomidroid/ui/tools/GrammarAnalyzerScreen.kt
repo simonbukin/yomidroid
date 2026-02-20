@@ -13,6 +13,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -38,6 +39,8 @@ import com.yomidroid.dictionary.DictionaryEngine
 import com.yomidroid.dictionary.DictionaryEntryWithPosition
 import com.yomidroid.grammar.*
 import com.yomidroid.ocr.OcrResultRepository
+import com.yomidroid.tts.TtsManager
+import com.yomidroid.ui.components.DictionaryEntryWebView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -45,36 +48,25 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-// POS background colors (pastel)
-private fun getPosBackgroundColor(posColor: PosColor): Color = when (posColor) {
-    PosColor.NOUN -> Color(0xFFE3F2FD)       // Light blue
-    PosColor.VERB -> Color(0xFFE8F5E9)       // Light green
-    PosColor.ADJECTIVE -> Color(0xFFFFF3E0)  // Light orange
-    PosColor.ADVERB -> Color(0xFFF3E5F5)     // Light purple
-    PosColor.PARTICLE -> Color(0xFFF5F5F5)   // Light gray
-    PosColor.AUXILIARY -> Color(0xFFE0F7FA)  // Light cyan
-    PosColor.OTHER -> Color(0xFFFAFAFA)      // Very light gray
-}
-
-// POS badge text colors (saturated)
+// POS badge colors — muted, cohesive palette
 private fun getPosBadgeColor(posColor: PosColor): Color = when (posColor) {
-    PosColor.NOUN -> Color(0xFF1976D2)       // Blue
-    PosColor.VERB -> Color(0xFF388E3C)       // Green
-    PosColor.ADJECTIVE -> Color(0xFFF57C00)  // Orange
-    PosColor.ADVERB -> Color(0xFF7B1FA2)     // Purple
-    PosColor.PARTICLE -> Color(0xFF616161)   // Gray
-    PosColor.AUXILIARY -> Color(0xFF00796B)  // Teal
-    PosColor.OTHER -> Color(0xFF757575)      // Default gray
+    PosColor.NOUN -> Color(0xFF5C7CBA)       // Steel blue
+    PosColor.VERB -> Color(0xFF5A9E6F)       // Sage green
+    PosColor.ADJECTIVE -> Color(0xFFCB8A4E)  // Warm amber
+    PosColor.ADVERB -> Color(0xFF8B6BAE)     // Soft purple
+    PosColor.PARTICLE -> Color(0xFF888888)   // Neutral gray
+    PosColor.AUXILIARY -> Color(0xFF5B9EA6)  // Muted teal
+    PosColor.OTHER -> Color(0xFF888888)      // Neutral gray
 }
 
-// Particle underline colors (vibrant)
+// Particle accent colors — subtle, not competing
 private fun getParticleColor(role: ParticleRole): Color = when (role) {
-    ParticleRole.TOPIC -> Color(0xFFE91E63)    // Pink
-    ParticleRole.SUBJECT -> Color(0xFFF44336)  // Red
-    ParticleRole.OBJECT -> Color(0xFF2196F3)   // Blue
-    ParticleRole.TARGET -> Color(0xFF009688)   // Teal
-    ParticleRole.MEANS -> Color(0xFFFFC107)    // Amber
-    ParticleRole.POSSESSIVE -> Color(0xFF9E9E9E) // Gray
+    ParticleRole.TOPIC -> Color(0xFFCF7B8A)    // Dusty rose
+    ParticleRole.SUBJECT -> Color(0xFFD4756A)  // Muted coral
+    ParticleRole.OBJECT -> Color(0xFF6B9BD2)   // Soft blue
+    ParticleRole.TARGET -> Color(0xFF6BA5A0)   // Sage teal
+    ParticleRole.MEANS -> Color(0xFFD4A84B)    // Warm gold
+    ParticleRole.POSSESSIVE -> Color(0xFFA0A0A0) // Light gray
     ParticleRole.NONE -> Color.Transparent
 }
 
@@ -103,10 +95,17 @@ fun GrammarAnalyzerScreen(
     var dictionaryMatches by remember { mutableStateOf<List<DictionaryEntryWithPosition>>(emptyList()) }
     var isAnalyzing by remember { mutableStateOf(false) }
 
+    var resolvedGrammarPoints by remember { mutableStateOf<List<ResolvedGrammarPoint>>(emptyList()) }
+
     val analyzer = remember { GrammarAnalyzer.getInstance() }
     val dictionaryEngine = remember { DictionaryEngine(context) }
-    val dojgMatcher = remember { DojgMatcher.getInstance(context) }
+    val grammarResolver = remember { GrammarResolver.getInstance(context) }
     val database = remember { AppDatabase.getInstance(context) }
+    val ttsManager = remember { TtsManager(context) }
+
+    DisposableEffect(Unit) {
+        onDispose { ttsManager.shutdown() }
+    }
 
     // Sentence history state
     var savedSentences by remember { mutableStateOf<List<GrammarSentenceEntity>>(emptyList()) }
@@ -125,9 +124,13 @@ fun GrammarAnalyzerScreen(
         }
     }
 
+    // Flag to trigger auto-analysis after OCR text arrives
+    var pendingAutoAnalyze by remember { mutableStateOf(false) }
+
     LaunchedEffect(latestOcrText) {
         if (!latestOcrText.isNullOrBlank() && inputText.isBlank()) {
             inputText = latestOcrText!!
+            pendingAutoAnalyze = true
         }
     }
 
@@ -152,17 +155,26 @@ fun GrammarAnalyzerScreen(
             // Run morphological analysis
             val result = analyzer.analyze(inputText)
 
-            // Find DOJG grammar points
-            val grammarPoints = dojgMatcher.findGrammarPoints(inputText)
+            // Find grammar points with library cross-references
+            val resolved = grammarResolver.resolveGrammar(inputText)
 
             // Find all dictionary matches (longest-match scan)
             val matches = withContext(Dispatchers.IO) {
                 dictionaryEngine.findAllMatches(inputText)
             }
 
-            analysisResult = result.copy(grammarPoints = grammarPoints)
+            analysisResult = result
+            resolvedGrammarPoints = resolved
             dictionaryMatches = matches
             isAnalyzing = false
+        }
+    }
+
+    // Auto-analyze when OCR text arrives
+    LaunchedEffect(pendingAutoAnalyze) {
+        if (pendingAutoAnalyze) {
+            pendingAutoAnalyze = false
+            runAnalysis()
         }
     }
 
@@ -202,7 +214,18 @@ fun GrammarAnalyzerScreen(
                     label = { Text("Japanese text") },
                     placeholder = { Text("Paste or scan text to analyze...") },
                     maxLines = 4,
-                    singleLine = false
+                    singleLine = false,
+                    trailingIcon = {
+                        if (inputText.isNotBlank()) {
+                            IconButton(onClick = { ttsManager.speak(inputText) }) {
+                                Icon(
+                                    Icons.AutoMirrored.Filled.VolumeUp,
+                                    contentDescription = "Read aloud",
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    }
                 )
             }
 
@@ -247,6 +270,7 @@ fun GrammarAnalyzerScreen(
                             inputText = sentence.sentence
                             showHistory = false
                             analysisResult = null
+                            resolvedGrammarPoints = emptyList()
                             dictionaryMatches = emptyList()
                         },
                         onDelete = { sentence ->
@@ -292,11 +316,11 @@ fun GrammarAnalyzerScreen(
                     }
                 }
 
-                // DOJG section
-                if (result.grammarPoints.isNotEmpty()) {
+                // DOJG section with library cross-references
+                if (resolvedGrammarPoints.isNotEmpty()) {
                     item {
                         DojgSection(
-                            grammarPoints = result.grammarPoints,
+                            grammarPoints = resolvedGrammarPoints,
                             onOpenUrl = { url ->
                                 val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
                                 context.startActivity(intent)
@@ -350,23 +374,17 @@ fun GrammarAnalyzerScreen(
 @Composable
 private fun BunsetsuChip(bunsetsu: Bunsetsu) {
     val showReading = bunsetsu.reading != bunsetsu.text
-    val bgColor = getPosBackgroundColor(bunsetsu.headPosColor)
     val hasParticle = bunsetsu.particleRole != ParticleRole.NONE
     val particleColor = getParticleColor(bunsetsu.particleRole)
-
-    val posLabel = bunsetsu.headWord?.posLabel
     val posBadgeColor = bunsetsu.headWord?.let { getPosBadgeColor(it.posColor) }
-    val particleLabel = if (hasParticle && bunsetsu.trailingParticle != null)
-        "${bunsetsu.trailingParticle.surface} ${bunsetsu.particleRole.label}"
-    else null
 
     Surface(
         modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(10.dp))
             .then(
                 if (hasParticle) {
                     Modifier.drawBehind {
-                        val strokeWidth = 3.dp.toPx()
+                        val strokeWidth = 2.dp.toPx()
                         drawLine(
                             color = particleColor,
                             start = Offset(0f, size.height - strokeWidth / 2),
@@ -376,56 +394,61 @@ private fun BunsetsuChip(bunsetsu: Bunsetsu) {
                     }
                 } else Modifier
             ),
-        color = bgColor,
-        tonalElevation = 1.dp
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+        tonalElevation = 0.dp
     ) {
         Column(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            // Japanese text
             Text(
                 text = bunsetsu.text,
                 fontSize = 18.sp,
-                fontWeight = FontWeight.Medium
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface
             )
 
+            // Reading (furigana)
             if (showReading) {
                 Text(
                     text = bunsetsu.reading,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                 )
             }
 
             Spacer(modifier = Modifier.height(4.dp))
 
+            // POS + particle labels
             Row(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 // POS badge
-                if (posLabel != null && posBadgeColor != null) {
+                bunsetsu.headWord?.let { head ->
+                    val color = posBadgeColor ?: Color(0xFF888888)
                     Surface(
-                        color = posBadgeColor.copy(alpha = 0.15f),
+                        color = color.copy(alpha = 0.12f),
                         shape = RoundedCornerShape(4.dp)
                     ) {
                         Text(
-                            text = posLabel,
+                            text = head.posLabel,
                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                             style = MaterialTheme.typography.labelSmall,
-                            color = posBadgeColor
+                            color = color
                         )
                     }
                 }
 
                 // Particle role badge
-                if (particleLabel != null) {
+                if (hasParticle && bunsetsu.trailingParticle != null) {
                     Surface(
-                        color = particleColor.copy(alpha = 0.15f),
+                        color = particleColor.copy(alpha = 0.12f),
                         shape = RoundedCornerShape(4.dp)
                     ) {
                         Text(
-                            text = particleLabel,
+                            text = "${bunsetsu.trailingParticle.surface} ${bunsetsu.particleRole.label}",
                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                             style = MaterialTheme.typography.labelSmall,
                             color = particleColor
@@ -440,10 +463,10 @@ private fun BunsetsuChip(bunsetsu: Bunsetsu) {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun DojgSection(
-    grammarPoints: List<DetectedGrammarPoint>,
+    grammarPoints: List<ResolvedGrammarPoint>,
     onOpenUrl: (String) -> Unit
 ) {
-    var selectedPoint by remember { mutableStateOf<DetectedGrammarPoint?>(null) }
+    var selectedPoint by remember { mutableStateOf<ResolvedGrammarPoint?>(null) }
 
     Column {
         FlowRow(
@@ -459,16 +482,31 @@ private fun DojgSection(
                     },
                     label = { Text(point.pattern) },
                     leadingIcon = {
-                        Surface(
-                            color = getDojgLevelColor(point.level),
-                            shape = RoundedCornerShape(4.dp)
-                        ) {
-                            Text(
-                                text = point.level.take(1).uppercase(),
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = Color.White
-                            )
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Surface(
+                                color = getDojgLevelColor(point.level),
+                                shape = RoundedCornerShape(4.dp)
+                            ) {
+                                Text(
+                                    text = point.level.take(1).uppercase(),
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color.White
+                                )
+                            }
+                            point.jlptLevel?.let { jlpt ->
+                                Surface(
+                                    color = Color(0xFF4CAF50),
+                                    shape = RoundedCornerShape(4.dp)
+                                ) {
+                                    Text(
+                                        text = jlpt,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Color.White
+                                    )
+                                }
+                            }
                         }
                     }
                 )
@@ -501,6 +539,16 @@ private fun DojgSection(
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onTertiaryContainer
                         )
+                        // Show library meaning if available and different
+                        point.libraryMeaning?.let { libMeaning ->
+                            if (libMeaning != point.meaning) {
+                                Text(
+                                    text = libMeaning,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.8f)
+                                )
+                            }
+                        }
                         if (point.formation.isNotEmpty()) {
                             Spacer(modifier = Modifier.height(4.dp))
                             point.formation.take(2).forEach { formation ->
@@ -514,11 +562,29 @@ private fun DojgSection(
                             }
                         }
                         Spacer(modifier = Modifier.height(8.dp))
-                        TextButton(
-                            onClick = { onOpenUrl(point.sourceUrl) },
-                            contentPadding = PaddingValues(0.dp)
-                        ) {
-                            Text("View Full Entry →")
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(
+                                onClick = { onOpenUrl(point.sourceUrl) },
+                                contentPadding = PaddingValues(0.dp)
+                            ) {
+                                Text("DOJG", color = Color(0xFF4CAF50))
+                            }
+                            point.videoUrl?.let { url ->
+                                TextButton(
+                                    onClick = { onOpenUrl(url) },
+                                    contentPadding = PaddingValues(0.dp)
+                                ) {
+                                    Text("\u25B6 Video", color = Color(0xFFFF0000))
+                                }
+                            }
+                            point.jlptsenseiUrl?.let { url ->
+                                TextButton(
+                                    onClick = { onOpenUrl(url) },
+                                    contentPadding = PaddingValues(0.dp)
+                                ) {
+                                    Text("JLPTSensei", color = Color(0xFF2196F3))
+                                }
+                            }
                         }
                     }
                 }
@@ -578,7 +644,7 @@ private fun DictionaryCard(match: DictionaryEntryWithPosition) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
-            // Expanded content
+            // Expanded content — full entry rendered via popup.js WebView
             AnimatedVisibility(
                 visible = expanded,
                 enter = expandVertically(),
@@ -586,50 +652,10 @@ private fun DictionaryCard(match: DictionaryEntryWithPosition) {
             ) {
                 Column(modifier = Modifier.padding(top = 8.dp)) {
                     HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-
-                    // All definitions
-                    entry.glossary.drop(1).forEachIndexed { index, gloss ->
-                        Text(
-                            text = "${index + 2}. $gloss",
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                    }
-
-                    // POS tags
-                    if (entry.partsOfSpeech.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            entry.partsOfSpeech.take(4).forEach { pos ->
-                                Surface(
-                                    color = MaterialTheme.colorScheme.secondaryContainer,
-                                    shape = RoundedCornerShape(4.dp)
-                                ) {
-                                    Text(
-                                        text = pos,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                        style = MaterialTheme.typography.labelSmall
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    // Frequency badge
-                    entry.frequencyRank?.let { rank ->
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Surface(
-                            color = Color(0xFF4CAF50).copy(alpha = 0.15f),
-                            shape = RoundedCornerShape(4.dp)
-                        ) {
-                            Text(
-                                text = "Freq: #$rank",
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = Color(0xFF2E7D32)
-                            )
-                        }
-                    }
+                    DictionaryEntryWebView(
+                        entries = listOf(entry),
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
             }
         }

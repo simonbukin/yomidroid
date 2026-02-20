@@ -146,6 +146,29 @@ data class DojgExample(
 )
 
 /**
+ * A DOJG grammar point cross-referenced with GrammarLibrary entries.
+ * Combines DOJG detection data with linked resources (videos, JLPT level, etc.).
+ */
+@Immutable
+data class ResolvedGrammarPoint(
+    // From DojgMatcher detection
+    val pattern: String,
+    val level: String,               // "basic", "intermediate", "advanced"
+    val meaning: String,
+    val formation: List<String>,
+    val examples: List<DojgExample>,
+    val matchedText: String,
+    val startIndex: Int,
+    val endIndex: Int,
+    val sourceUrl: String,           // DOJG reference URL
+    // From GrammarLibrary cross-reference (null if no match)
+    val jlptLevel: String?,          // "N5", "N4", etc.
+    val videoUrl: String?,           // GameGengo YouTube with timestamp
+    val jlptsenseiUrl: String?,
+    val libraryMeaning: String?      // Often more concise than DOJG meaning
+)
+
+/**
  * A dictionary match found via longest-match scanning.
  */
 @Immutable

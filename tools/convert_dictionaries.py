@@ -146,13 +146,27 @@ def create_schema(conn: sqlite3.Connection) -> None:
             sequence INTEGER,
             source TEXT NOT NULL DEFAULT 'jitendex',
             name_type TEXT,
-            frequency_rank INTEGER
+            frequency_rank INTEGER,
+            jpdb_rank INTEGER
         )
     ''')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_expression ON terms(expression)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_reading ON terms(reading)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_source ON terms(source)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_frequency ON terms(frequency_rank)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_jpdb ON terms(jpdb_rank)')
+
+    # Pitch accent table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS pitch_accents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            expression TEXT NOT NULL,
+            reading TEXT NOT NULL,
+            downstep_position INTEGER NOT NULL
+        )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_pitch_expression ON pitch_accents(expression)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_pitch_reading ON pitch_accents(reading)')
     conn.commit()
 
 
@@ -260,6 +274,29 @@ def parse_frequency_text(txt_path: str) -> Dict[str, int]:
                 rank += 1
 
     return freq_map
+
+
+def parse_pitch_accent_tsv(tsv_path: str) -> List[Tuple[str, str, int]]:
+    """Parse kanjium pitch accent TSV file.
+    Format: kanji<tab>reading<tab>pitch_number
+    Returns list of (expression, reading, downstep_position) tuples.
+    """
+    entries = []
+    with open(tsv_path, 'r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            parts = line.split('\t')
+            if len(parts) >= 3:
+                expression = parts[0]
+                reading = parts[1]
+                try:
+                    downstep = int(parts[2])
+                    entries.append((expression, reading, downstep))
+                except ValueError:
+                    continue
+    return entries
 
 
 def load_frequency_data(freq_path: str) -> Dict[str, int]:
@@ -411,6 +448,8 @@ Examples:
     parser.add_argument('--jitendex', help='Jitendex Yomitan ZIP file')
     parser.add_argument('--jmnedict', help='JMnedict XML file')
     parser.add_argument('--frequency', help='Frequency data (Yomitan ZIP or text file)')
+    parser.add_argument('--jpdb-frequency', help='JPDB frequency data (Yomitan ZIP format)')
+    parser.add_argument('--pitch-accent', help='Kanjium pitch accent TSV file')
     parser.add_argument('--output', required=True, help='Output SQLite database')
     args = parser.parse_args()
 
@@ -433,6 +472,13 @@ Examples:
         freq_map = load_frequency_data(args.frequency)
         print(f"  Loaded {len(freq_map)} frequency entries")
 
+    # Load JPDB frequency data
+    jpdb_map: Dict[str, int] = {}
+    if args.jpdb_frequency:
+        print(f"Loading JPDB frequency data from {args.jpdb_frequency}...")
+        jpdb_map = load_frequency_data(args.jpdb_frequency)
+        print(f"  Loaded {len(jpdb_map)} JPDB frequency entries")
+
     # Process Jitendex
     jitendex_count = 0
     if args.jitendex:
@@ -442,6 +488,7 @@ Examples:
         batch = []
         for entry in entries:
             freq_rank = freq_map.get(entry['expression'])
+            jpdb_rank = jpdb_map.get(entry['expression'])
             batch.append((
                 entry['expression'],
                 entry['reading'],
@@ -451,13 +498,14 @@ Examples:
                 entry['sequence'],
                 'jitendex',
                 None,  # name_type
-                freq_rank
+                freq_rank,
+                jpdb_rank
             ))
 
             if len(batch) >= 10000:
                 cursor.executemany('''
-                    INSERT INTO terms (expression, reading, glossary, pos, score, sequence, source, name_type, frequency_rank)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO terms (expression, reading, glossary, pos, score, sequence, source, name_type, frequency_rank, jpdb_rank)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', batch)
                 conn.commit()
                 jitendex_count += len(batch)
@@ -466,8 +514,8 @@ Examples:
 
         if batch:
             cursor.executemany('''
-                INSERT INTO terms (expression, reading, glossary, pos, score, sequence, source, name_type, frequency_rank)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO terms (expression, reading, glossary, pos, score, sequence, source, name_type, frequency_rank, jpdb_rank)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', batch)
             conn.commit()
             jitendex_count += len(batch)
@@ -491,13 +539,14 @@ Examples:
                 0,  # sequence
                 'jmnedict',
                 entry['name_type'],
-                None  # No frequency for names
+                None,  # No frequency for names
+                None   # No JPDB rank for names
             ))
 
             if len(batch) >= 10000:
                 cursor.executemany('''
-                    INSERT INTO terms (expression, reading, glossary, pos, score, sequence, source, name_type, frequency_rank)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO terms (expression, reading, glossary, pos, score, sequence, source, name_type, frequency_rank, jpdb_rank)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', batch)
                 conn.commit()
                 jmnedict_count += len(batch)
@@ -506,13 +555,39 @@ Examples:
 
         if batch:
             cursor.executemany('''
-                INSERT INTO terms (expression, reading, glossary, pos, score, sequence, source, name_type, frequency_rank)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO terms (expression, reading, glossary, pos, score, sequence, source, name_type, frequency_rank, jpdb_rank)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', batch)
             conn.commit()
             jmnedict_count += len(batch)
 
         print(f"  Total JMnedict entries: {jmnedict_count}")
+
+    # Process pitch accent data
+    pitch_count = 0
+    if args.pitch_accent:
+        print(f"\nProcessing pitch accent data from {args.pitch_accent}...")
+        pitch_entries = parse_pitch_accent_tsv(args.pitch_accent)
+        batch = []
+        for expr, reading, downstep in pitch_entries:
+            batch.append((expr, reading, downstep))
+            if len(batch) >= 10000:
+                cursor.executemany('''
+                    INSERT INTO pitch_accents (expression, reading, downstep_position)
+                    VALUES (?, ?, ?)
+                ''', batch)
+                conn.commit()
+                pitch_count += len(batch)
+                print(f"  Inserted {pitch_count} entries...")
+                batch = []
+        if batch:
+            cursor.executemany('''
+                INSERT INTO pitch_accents (expression, reading, downstep_position)
+                VALUES (?, ?, ?)
+            ''', batch)
+            conn.commit()
+            pitch_count += len(batch)
+        print(f"  Total pitch accent entries: {pitch_count}")
 
     # Print final stats
     cursor.execute('SELECT COUNT(*) FROM terms')
@@ -528,6 +603,16 @@ Examples:
     if jmnedict_count:
         print(f"  JMnedict: {jmnedict_count:,}")
     print(f"  With frequency data: {freq_count:,}")
+
+    cursor.execute('SELECT COUNT(*) FROM terms WHERE jpdb_rank IS NOT NULL')
+    jpdb_count = cursor.fetchone()[0]
+    if jpdb_count:
+        print(f"  With JPDB frequency: {jpdb_count:,}")
+
+    cursor.execute('SELECT COUNT(*) FROM pitch_accents')
+    pa_count = cursor.fetchone()[0]
+    if pa_count:
+        print(f"  Pitch accent entries: {pa_count:,}")
 
     # Get file size
     conn.close()

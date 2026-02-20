@@ -55,7 +55,16 @@ data class LookupHistoryEntity(
     val screenshotPath: String? = null,
 
     @ColumnInfo(name = "sentence")
-    val sentence: String? = null
+    val sentence: String? = null,
+
+    @ColumnInfo(name = "source_package")
+    val sourcePackage: String? = null,
+
+    @ColumnInfo(name = "source_app_label")
+    val sourceAppLabel: String? = null,
+
+    @ColumnInfo(name = "source_window_title")
+    val sourceWindowTitle: String? = null
 )
 
 @Dao
@@ -81,6 +90,9 @@ interface LookupHistoryDao {
     @Query("DELETE FROM lookup_history")
     suspend fun deleteAll()
 
+    @Query("SELECT * FROM lookup_history WHERE word = :word AND timestamp > :since ORDER BY timestamp DESC LIMIT 1")
+    suspend fun findRecentByWord(word: String, since: Long): LookupHistoryEntity?
+
     @Query("""
         SELECT * FROM lookup_history
         WHERE word LIKE '%' || :query || '%'
@@ -89,6 +101,12 @@ interface LookupHistoryDao {
         ORDER BY timestamp DESC
     """)
     suspend fun search(query: String): List<LookupHistoryEntity>
+
+    @Query("SELECT COUNT(*) FROM lookup_history WHERE timestamp > :since")
+    suspend fun countSince(since: Long): Int
+
+    @Query("SELECT COUNT(DISTINCT word) FROM lookup_history")
+    suspend fun countUniqueWords(): Int
 }
 
 @Dao
@@ -121,7 +139,7 @@ interface GrammarSentenceDao {
  */
 @Database(
     entities = [LookupHistoryEntity::class, GrammarSentenceEntity::class],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -151,6 +169,14 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_3_4 = object : androidx.room.migration.Migration(3, 4) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE lookup_history ADD COLUMN source_package TEXT")
+                db.execSQL("ALTER TABLE lookup_history ADD COLUMN source_app_label TEXT")
+                db.execSQL("ALTER TABLE lookup_history ADD COLUMN source_window_title TEXT")
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -158,7 +184,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "yomidroid_history.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                     .build()
                 INSTANCE = instance
                 instance

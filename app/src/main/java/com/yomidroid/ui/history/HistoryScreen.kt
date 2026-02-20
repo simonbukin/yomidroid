@@ -1,9 +1,13 @@
 package com.yomidroid.ui.history
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.graphics.BitmapFactory
 import android.widget.Toast
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -16,6 +20,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -61,6 +66,11 @@ fun HistoryScreen(
     var showClearDialog by remember { mutableStateOf(false) }
     var selectedFilter by remember { mutableStateOf(TimeFilter.ALL) }
     var searchQuery by remember { mutableStateOf("") }
+
+    // Statistics state
+    var todayCount by remember { mutableIntStateOf(0) }
+    var weekCount by remember { mutableIntStateOf(0) }
+    var totalUnique by remember { mutableIntStateOf(0) }
 
     // Anki exporter
     val ankiExporter = remember { AnkiDroidExporter(context) }
@@ -137,6 +147,12 @@ fun HistoryScreen(
                     dao.getSince(since)
                 }
             }
+
+            // Load statistics
+            val now = System.currentTimeMillis()
+            todayCount = dao.countSince(now - 24 * 60 * 60 * 1000L)
+            weekCount = dao.countSince(now - 7 * 24 * 60 * 60 * 1000L)
+            totalUnique = dao.countUniqueWords()
         }
         isLoading = false
     }
@@ -191,6 +207,62 @@ fun HistoryScreen(
         ) {
             // Search TextField - always visible unless loading
             if (!isLoading) {
+                // Statistics card (shown when not searching)
+                if (searchQuery.isEmpty() && totalUnique > 0) {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 12.dp),
+                            horizontalArrangement = Arrangement.SpaceEvenly
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    text = "$todayCount",
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                                Text(
+                                    text = "Today",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                                )
+                            }
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    text = "$weekCount",
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                                Text(
+                                    text = "This Week",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                                )
+                            }
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    text = "$totalUnique",
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                                Text(
+                                    text = "Unique Words",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                                )
+                            }
+                        }
+                    }
+                }
+
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
@@ -257,7 +329,7 @@ fun HistoryScreen(
                                 text = if (searchQuery.isNotEmpty())
                                     "Try a different search term."
                                 else
-                                    "Lookups that you view for more than 1 second will appear here.",
+                                    "Words you look up will appear here.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -295,6 +367,7 @@ fun HistoryScreen(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun HistoryItem(
     item: LookupHistoryEntity,
@@ -302,6 +375,7 @@ private fun HistoryItem(
     onDelete: () -> Unit,
     onExportToAnki: (LookupHistoryEntity, (AnkiButtonState) -> Unit) -> Unit
 ) {
+    val context = LocalContext.current
     var showDeleteDialog by remember { mutableStateOf(false) }
     var ankiButtonState by remember { mutableStateOf(AnkiButtonState.IDLE) }
 
@@ -329,7 +403,14 @@ private fun HistoryItem(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick),
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = {
+                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    clipboard.setPrimaryClip(ClipData.newPlainText("word", item.word))
+                    Toast.makeText(context, "Copied \"${item.word}\"", Toast.LENGTH_SHORT).show()
+                }
+            ),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
         )
@@ -352,6 +433,13 @@ private fun HistoryItem(
                             text = item.reading,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    item.sourceAppLabel?.let { label ->
+                        Text(
+                            text = label + (item.sourceWindowTitle?.takeIf { it != label }?.let { " · $it" } ?: ""),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.tertiary
                         )
                     }
                 }

@@ -19,6 +19,7 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.yomidroid.config.ColorConfigManager
 import com.yomidroid.service.YomidroidAccessibilityService
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -28,11 +29,15 @@ fun SettingsScreen(
     onOpenColorSettings: () -> Unit,
     onOpenOcrSettings: () -> Unit,
     onOpenTranslationSettings: () -> Unit,
+    onOpenInputSettings: () -> Unit,
+    onOpenDictionarySettings: () -> Unit,
     onOpenAccessibilitySettings: () -> Unit
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var isAccessibilityEnabled by remember { mutableStateOf(false) }
+    val colorConfigManager = remember { ColorConfigManager(context) }
+    var isFabEnabled by remember { mutableStateOf(colorConfigManager.isFabEnabled()) }
 
     // Check accessibility status on resume
     DisposableEffect(lifecycleOwner) {
@@ -101,6 +106,12 @@ fun SettingsScreen(
             )
 
             SettingsItem(
+                title = "Dictionaries",
+                subtitle = "Manage dictionaries and frequency lists",
+                onClick = onOpenDictionarySettings
+            )
+
+            SettingsItem(
                 title = "OCR Engine",
                 subtitle = "Choose between on-device or cloud OCR",
                 onClick = onOpenOcrSettings
@@ -142,6 +153,50 @@ fun SettingsScreen(
                 title = "Colors",
                 subtitle = "Customize FAB, highlights, and accent colors",
                 onClick = onOpenColorSettings
+            )
+
+            // FAB visibility toggle (in-app alternative to Quick Settings tile)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Show Floating Button",
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                    Text(
+                        text = "Toggle the FAB overlay on/off",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = isFabEnabled,
+                    onCheckedChange = { enabled ->
+                        isFabEnabled = enabled
+                        colorConfigManager.setFabEnabled(enabled)
+                        YomidroidAccessibilityService.instance?.updateFabVisibility()
+                    }
+                )
+            }
+
+            Divider(modifier = Modifier.padding(horizontal = 16.dp))
+
+            // Controls Section
+            Text(
+                text = "Controls",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+            )
+
+            SettingsItem(
+                title = "Hardware Controls",
+                subtitle = "Bind gamepad buttons and D-pad to actions",
+                onClick = onOpenInputSettings
             )
 
             Divider(modifier = Modifier.padding(horizontal = 16.dp))
