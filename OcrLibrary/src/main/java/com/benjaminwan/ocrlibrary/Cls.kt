@@ -2,16 +2,17 @@ package com.benjaminwan.ocrlibrary
 
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
+import ai.onnxruntime.OrtSession
 import android.content.res.AssetManager
 import com.benjaminwan.ocrlibrary.models.ClsResult
 import org.opencv.core.Mat
 import java.util.*
 
-class Cls(private val ortEnv: OrtEnvironment, assetManager: AssetManager, modelName: String) {
+class Cls(private val ortEnv: OrtEnvironment, assetManager: AssetManager, modelName: String, private val sessionOptions: OrtSession.SessionOptions) {
 
     private val session by lazy {
         val model = assetManager.open(modelName, AssetManager.ACCESS_UNKNOWN).readBytes()
-        ortEnv.createSession(model)
+        ortEnv.createSession(model, sessionOptions)
     }
 
     private fun getClsResult(src: Mat): ClsResult {

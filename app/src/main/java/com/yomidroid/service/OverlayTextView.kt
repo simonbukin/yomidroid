@@ -1013,9 +1013,15 @@ class OverlayTextView(
         val bitmapX = screenCoordX / scaleX
         val bitmapY = screenCoordY / scaleY
 
-        // Nearest-center matching: find the character whose center is closest to the tap point.
-        // This avoids the right-leaning bias of bounds-containment when character bounding boxes
-        // are wider than the visual glyphs.
+        // First try: direct containment — is the tap inside any character's bounding box?
+        for ((index, bounds) in result.charBounds.withIndex()) {
+            if (bitmapX >= bounds.left && bitmapX <= bounds.right &&
+                bitmapY >= bounds.top && bitmapY <= bounds.bottom) {
+                return index
+            }
+        }
+
+        // Fallback: nearest-center matching for taps between characters
         var bestIndex = -1
         var bestDist = Float.MAX_VALUE
 

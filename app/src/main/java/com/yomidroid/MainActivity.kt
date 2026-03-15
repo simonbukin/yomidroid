@@ -35,6 +35,7 @@ import com.yomidroid.ui.tools.DictionarySearchScreen
 import com.yomidroid.ui.tools.GrammarAnalyzerScreen
 import com.yomidroid.ui.tools.GrammarLibraryScreen
 import com.yomidroid.ui.tools.ToolsScreen
+import com.yomidroid.ui.tools.LiveLookupScreen
 import com.yomidroid.ui.tools.TranslationToolScreen
 
 sealed class Screen(val route: String) {
@@ -45,6 +46,7 @@ sealed class Screen(val route: String) {
     object GrammarLibrary : Screen("grammar_library")
     object TranslationTool : Screen("translation_tool")
     object DictionarySearch : Screen("dictionary_search")
+    object LiveLookup : Screen("live_lookup")
     object Settings : Screen("settings")
     object AnkiSettings : Screen("anki_settings")
     object ColorSettings : Screen("color_settings")
@@ -108,6 +110,9 @@ class MainActivity : ComponentActivity() {
                     }
                     Screen.DictionarySearch -> {
                         DictionarySearchScreen(onBack = { currentScreen = Screen.Tools })
+                    }
+                    Screen.LiveLookup -> {
+                        LiveLookupScreen(onBack = { currentScreen = Screen.Tools })
                     }
                     is Screen.HistoryDetail -> {
                         val detailScreen = currentScreen as Screen.HistoryDetail
@@ -188,7 +193,8 @@ fun MainAppContent(
                     onNavigateToGrammar = { onNavigate(Screen.GrammarAnalyzer) },
                     onNavigateToGrammarLibrary = { onNavigate(Screen.GrammarLibrary) },
                     onNavigateToTranslation = { onNavigate(Screen.TranslationTool) },
-                    onNavigateToDictionarySearch = { onNavigate(Screen.DictionarySearch) }
+                    onNavigateToDictionarySearch = { onNavigate(Screen.DictionarySearch) },
+                    onNavigateToLiveLookup = { onNavigate(Screen.LiveLookup) }
                 )
                 Screen.Settings -> SettingsScreen(
                     onOpenAnkiSettings = { onNavigate(Screen.AnkiSettings) },

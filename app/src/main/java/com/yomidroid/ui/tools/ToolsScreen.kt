@@ -20,7 +20,8 @@ fun ToolsScreen(
     onNavigateToGrammar: () -> Unit,
     onNavigateToGrammarLibrary: () -> Unit,
     onNavigateToTranslation: () -> Unit,
-    onNavigateToDictionarySearch: () -> Unit
+    onNavigateToDictionarySearch: () -> Unit,
+    onNavigateToLiveLookup: () -> Unit = {}
 ) {
     Scaffold(
         topBar = {
@@ -73,6 +74,22 @@ fun ToolsScreen(
                 title = "Grammar Library",
                 subtitle = "Browse JLPT grammar with GameGengo video lessons",
                 onClick = onNavigateToGrammarLibrary
+            )
+
+            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+
+            // Overlay Section
+            Text(
+                text = "Overlay",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+            )
+
+            ToolItem(
+                title = "Live Lookup",
+                subtitle = "View overlay lookup results in-app (decoupled mode)",
+                onClick = onNavigateToLiveLookup
             )
 
             Spacer(modifier = Modifier.height(16.dp))

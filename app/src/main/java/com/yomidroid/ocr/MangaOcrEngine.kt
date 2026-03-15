@@ -130,20 +130,8 @@ class MangaOcrEngine(private val context: Context) : OcrEngine {
         )
     }
 
-    private fun synthesizeCharBounds(text: String, lineBounds: Rect): List<Rect> {
-        val cleanText = text.replace("\\s".toRegex(), "")
-        if (cleanText.isEmpty()) return emptyList()
-
-        val charWidth = lineBounds.width().toFloat() / cleanText.length
-        return cleanText.indices.map { i ->
-            Rect(
-                (lineBounds.left + i * charWidth).toInt(),
-                lineBounds.top,
-                (lineBounds.left + (i + 1) * charWidth).toInt(),
-                lineBounds.bottom
-            )
-        }
-    }
+    private fun synthesizeCharBounds(text: String, lineBounds: Rect): List<Rect> =
+        OcrUtils.synthesizeCharBounds(text, lineBounds)
 
     override fun close() {
         mangaOcrInference?.close()

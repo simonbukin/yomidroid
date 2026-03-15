@@ -42,7 +42,6 @@ class MlKitOcrEngine : OcrEngine {
 
         for (block in visionText.textBlocks) {
             for (line in block.lines) {
-                val lineText = line.text
                 val charBounds = mutableListOf<Rect>()
 
                 // Collect symbol texts and bounds together
@@ -66,16 +65,25 @@ class MlKitOcrEngine : OcrEngine {
                     if (symText.length <= 1) {
                         charBounds.add(bounds)
                     } else {
-                        // Split the bounding box evenly across characters
-                        val charWidth = bounds.width() / symText.length
+                        // Split the bounding box evenly across characters (float division)
+                        val totalWidth = bounds.width().toFloat()
                         for (c in symText.indices) {
                             charBounds.add(Rect(
-                                bounds.left + c * charWidth,
+                                (bounds.left + c * totalWidth / symText.length).toInt(),
                                 bounds.top,
-                                bounds.left + (c + 1) * charWidth,
+                                if (c == symText.length - 1) bounds.right
+                                else (bounds.left + (c + 1) * totalWidth / symText.length).toInt(),
                                 bounds.bottom
                             ))
                         }
+                    }
+                }
+
+                // Build lineText from processed symbols (not line.text) to guarantee
+                // charBounds.size == lineText.length
+                val lineText = buildString {
+                    for (symText in symbolTexts) {
+                        append(symText)
                     }
                 }
 

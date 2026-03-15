@@ -71,7 +71,10 @@ data class DictionaryEntry(
     val additionalFrequencies: Map<String, Int> = emptyMap(),
     val glossaryRich: String? = null,
     val definitionTags: List<String> = emptyList(),
-    val tagMeta: Map<String, com.yomidroid.data.TagMeta> = emptyMap()
+    val tagMeta: Map<String, com.yomidroid.data.TagMeta> = emptyMap(),
+    val inflectionChainLength: Int = 0,
+    val isExactMatch: Boolean = false,
+    val dictionaryPriority: Int = 0
 ) {
     /** Returns true if this entry is from the names dictionary */
     val isName: Boolean get() = source == DictionarySource.JMNEDICT

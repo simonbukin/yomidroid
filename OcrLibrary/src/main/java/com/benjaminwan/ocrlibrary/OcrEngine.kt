@@ -1,6 +1,7 @@
 package com.benjaminwan.ocrlibrary
 
 import ai.onnxruntime.OrtEnvironment
+import ai.onnxruntime.OrtSession
 import android.content.Context
 import android.content.res.AssetManager
 import android.graphics.Bitmap
@@ -24,11 +25,22 @@ class OcrEngine(context: Context) : Closeable {
 
     private val ortEnv by lazy { OrtEnvironment.getEnvironment() }
 
-    private val det by lazy { Det(ortEnv, assetManager, DET_NAME) }
+    private val sessionOptions by lazy {
+        OrtSession.SessionOptions().apply {
+            setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
+            try {
+                addXnnpack(mapOf())
+            } catch (_: Exception) {
+                // XNNPACK not available on this device/build
+            }
+        }
+    }
 
-    private val cls by lazy { Cls(ortEnv, assetManager, CLS_NAME) }
+    private val det by lazy { Det(ortEnv, assetManager, DET_NAME, sessionOptions) }
 
-    private val rec by lazy { Rec(ortEnv, assetManager, REC_NAME, KEYS_NAME) }
+    private val cls by lazy { Cls(ortEnv, assetManager, CLS_NAME, sessionOptions) }
+
+    private val rec by lazy { Rec(ortEnv, assetManager, REC_NAME, KEYS_NAME, sessionOptions) }
 
     init {
         if (OpenCVLoader.initDebug()) {
@@ -189,10 +201,10 @@ class OcrEngine(context: Context) : Closeable {
 
 
     companion object {
-        private const val DET_NAME = "ch_PP-OCRv3_det_infer.onnx"
-        private const val CLS_NAME = "ch_ppocr_mobile_v2.0_cls_infer.onnx"
-        private const val REC_NAME = "ch_PP-OCRv3_rec_infer.onnx"
-        private const val KEYS_NAME = "ppocr_keys_v1.txt"
+        private const val DET_NAME = "ch_PP-OCRv3_det_infer.onnx"  // Detection is language-agnostic
+        private const val CLS_NAME = "ch_ppocr_mobile_v2.0_cls_infer.onnx"  // Classifier is language-agnostic
+        private const val REC_NAME = "japan_PP-OCRv3_rec_infer.onnx"  // Japanese recognition
+        private const val KEYS_NAME = "japan_dict.txt"  // Japanese vocabulary
     }
 
 

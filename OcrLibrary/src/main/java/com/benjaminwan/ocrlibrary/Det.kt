@@ -2,6 +2,7 @@ package com.benjaminwan.ocrlibrary
 
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
+import ai.onnxruntime.OrtSession
 import ai.onnxruntime.TensorInfo
 import android.content.res.AssetManager
 import com.benjaminwan.ocrlibrary.models.DetPoint
@@ -11,11 +12,11 @@ import org.opencv.core.*
 import org.opencv.imgproc.Imgproc
 import java.util.*
 
-class Det(private val ortEnv: OrtEnvironment, assetManager: AssetManager, modelName: String) {
+class Det(private val ortEnv: OrtEnvironment, assetManager: AssetManager, modelName: String, private val sessionOptions: OrtSession.SessionOptions) {
 
     private val session by lazy {
         val model = assetManager.open(modelName, AssetManager.ACCESS_UNKNOWN).readBytes()
-        ortEnv.createSession(model)
+        ortEnv.createSession(model, sessionOptions)
     }
 
     fun getDetResults(src: Mat, s: ScaleParam, boxScoreThresh: Float, boxThresh: Float, unClipRatio: Float): List<DetResult> {

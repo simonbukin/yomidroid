@@ -1,5 +1,7 @@
 package com.yomidroid.ocr
 
+import android.util.Log
+
 /**
  * Maps a character in the unified text string back to its source OcrResult and local index.
  */
@@ -58,6 +60,12 @@ class UnifiedOcrContext(val ocrResults: List<OcrResult>) {
 
         ocrResults.forEachIndexed { resultIdx, result ->
             resultIndexMap[result] = resultIdx
+            if (result.charBounds.size != result.text.length) {
+                Log.w("UnifiedOcrContext",
+                    "charBounds/text mismatch: result[$resultIdx] " +
+                    "text.length=${result.text.length} charBounds.size=${result.charBounds.size} " +
+                    "text='${result.text.take(20)}'")
+            }
             result.text.forEachIndexed { charIdx, _ ->
                 val unifiedIdx = textBuilder.length + charIdx
                 mappings.add(CharMapping(result, charIdx, unifiedIdx))

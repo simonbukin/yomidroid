@@ -38,6 +38,7 @@ class ColorConfigManager(context: Context) {
         private const val KEY_FAB_COLOR = "fab_color"
         private const val KEY_CURSOR_DOT_COLOR = "cursor_dot_color"
         private const val KEY_FAB_ENABLED = "fab_enabled"
+        private const val KEY_DECOUPLED_MODE = "decoupled_mode"
     }
 
     fun getConfig(): ColorConfig {
@@ -67,6 +68,12 @@ class ColorConfigManager(context: Context) {
 
     fun setFabEnabled(enabled: Boolean) {
         prefs.edit().putBoolean(KEY_FAB_ENABLED, enabled).apply()
+    }
+
+    fun isDecoupledMode(): Boolean = prefs.getBoolean(KEY_DECOUPLED_MODE, false)
+
+    fun setDecoupledMode(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_DECOUPLED_MODE, enabled).apply()
     }
 
     fun resetToDefaults() {

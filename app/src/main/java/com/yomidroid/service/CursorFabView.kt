@@ -4,7 +4,6 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
-import android.graphics.Typeface
 import android.view.View
 
 /**
@@ -117,9 +116,6 @@ class CursorFabView(context: Context) : View(context) {
         // Draw main circle (white background)
         canvas.drawCircle(cx, mainCy, mainRadius, mainPaint)
 
-        // Draw kanji icon "辞" (dictionary)
-        drawKanjiIcon(canvas, cx, mainCy)
-
         // Draw cursor dot - positioned at edge of main circle + gap
         val cursorCy = if (cursorOnBottom) {
             mainCy + mainRadius + cursorGap  // Below main circle
@@ -130,16 +126,4 @@ class CursorFabView(context: Context) : View(context) {
         canvas.drawCircle(cx, cursorCy, cursorRadius, cursorBorderPaint)
     }
 
-    private fun drawKanjiIcon(canvas: Canvas, cx: Float, cy: Float) {
-        val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = accentColor
-            textSize = mainRadius * 1.0f
-            textAlign = Paint.Align.CENTER
-            typeface = Typeface.DEFAULT_BOLD
-        }
-        // Center vertically using font metrics
-        val metrics = textPaint.fontMetrics
-        val textY = cy - (metrics.ascent + metrics.descent) / 2
-        canvas.drawText("辞", cx, textY, textPaint)
-    }
 }

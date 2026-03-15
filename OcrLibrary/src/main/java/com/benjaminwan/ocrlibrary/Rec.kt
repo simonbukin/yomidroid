@@ -2,6 +2,7 @@ package com.benjaminwan.ocrlibrary
 
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
+import ai.onnxruntime.OrtSession
 import android.content.res.AssetManager
 import com.benjaminwan.ocrlibrary.models.RecResult
 import org.opencv.core.Mat
@@ -9,11 +10,11 @@ import org.opencv.core.Size
 import org.opencv.imgproc.Imgproc.resize
 import java.util.*
 
-class Rec(private val ortEnv: OrtEnvironment, assetManager: AssetManager, modelName: String, keysName: String) {
+class Rec(private val ortEnv: OrtEnvironment, assetManager: AssetManager, modelName: String, keysName: String, private val sessionOptions: OrtSession.SessionOptions) {
 
     private val session by lazy {
         val model = assetManager.open(modelName, AssetManager.ACCESS_UNKNOWN).readBytes()
-        ortEnv.createSession(model)
+        ortEnv.createSession(model, sessionOptions)
     }
 
     private val keys by lazy {

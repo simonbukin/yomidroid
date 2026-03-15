@@ -120,7 +120,7 @@ dependencies {
     implementation(project(":OcrLibrary"))
 
     // ONNX Runtime for Manga OCR inference
-    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.14.0")
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.24.2")
 
     // Kuromoji Japanese morphological analyzer (for Grammar Analyzer)
     implementation("com.atilika.kuromoji:kuromoji-ipadic:0.9.0")

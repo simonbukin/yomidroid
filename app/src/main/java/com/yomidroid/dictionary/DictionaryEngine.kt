@@ -19,6 +19,17 @@ class DictionaryEngine(context: Context) {
 
     companion object {
         const val MAX_SEARCH_LENGTH = 20
+
+        val ENTRY_COMPARATOR: Comparator<DictionaryEntry> =
+            compareByDescending<DictionaryEntry> { it.matchedText.length }
+                .thenBy { it.inflectionChainLength }
+                .thenByDescending { if (it.isExactMatch) 1 else 0 }
+                .thenBy { it.frequencyRank ?: Int.MAX_VALUE }
+                .thenBy { it.dictionaryPriority }
+                .thenBy { it.source == DictionarySource.JMNEDICT }
+                .thenByDescending { it.score }
+                .thenBy { it.expression }
+                .thenByDescending { it.glossary.size }
     }
 
     /**
@@ -63,13 +74,8 @@ class DictionaryEngine(context: Context) {
             }
         }
 
-        // Sort by: match length (longest first), names last, score, then frequency
-        return results.sortedWith(
-            compareByDescending<DictionaryEntry> { it.matchedText.length }
-                .thenBy { it.source == DictionarySource.JMNEDICT }  // Names last
-                .thenByDescending { it.score }                       // Score first (particles have high scores)
-                .thenBy { it.frequencyRank ?: Int.MAX_VALUE }        // Then frequency
-        ).distinctBy { "${it.expression}|${it.reading}|${it.sourceDictId}" }
+        return results.sortedWith(ENTRY_COMPARATOR)
+            .distinctBy { "${it.expression}|${it.reading}|${it.sourceDictId}" }
     }
 
     /**
@@ -150,12 +156,8 @@ class DictionaryEngine(context: Context) {
             }
         }
 
-        results.sortedWith(
-            compareByDescending<DictionaryEntry> { it.expression == query || it.reading == query }
-                .thenBy { it.source == DictionarySource.JMNEDICT }
-                .thenByDescending { it.score }
-                .thenBy { it.frequencyRank ?: Int.MAX_VALUE }
-        ).distinctBy { "${it.expression}|${it.reading}|${it.sourceDictId}" }
+        results.sortedWith(ENTRY_COMPARATOR)
+            .distinctBy { "${it.expression}|${it.reading}|${it.sourceDictId}" }
     }
 
     /**
@@ -230,7 +232,9 @@ class DictionaryEngine(context: Context) {
             additionalFrequencies = entity.additionalFrequencies,
             glossaryRich = entity.glossaryRich,
             definitionTags = entity.tagMeta.keys.toList(),
-            tagMeta = entity.tagMeta
+            tagMeta = entity.tagMeta,
+            inflectionChainLength = variant.path.size,
+            isExactMatch = (matchedText == entity.expression || matchedText == entity.reading)
         )
     }
 }

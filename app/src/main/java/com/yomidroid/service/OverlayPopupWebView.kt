@@ -258,8 +258,8 @@ class OverlayPopupWebView(private val context: Context) {
      * Call setEntries(json) in the WebView to render entries.
      */
     private fun injectData(json: String) {
-        val escaped = json.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
-        webView?.evaluateJavascript("setEntries('$escaped')", null)
+        val escaped = org.json.JSONObject.quote(json)
+        webView?.evaluateJavascript("setEntries($escaped)", null)
     }
 
     /**

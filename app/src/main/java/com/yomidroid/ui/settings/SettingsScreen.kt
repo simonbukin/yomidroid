@@ -38,6 +38,7 @@ fun SettingsScreen(
     var isAccessibilityEnabled by remember { mutableStateOf(false) }
     val colorConfigManager = remember { ColorConfigManager(context) }
     var isFabEnabled by remember { mutableStateOf(colorConfigManager.isFabEnabled()) }
+    var isDecoupledMode by remember { mutableStateOf(colorConfigManager.isDecoupledMode()) }
 
     // Check accessibility status on resume
     DisposableEffect(lifecycleOwner) {
@@ -179,6 +180,34 @@ fun SettingsScreen(
                         isFabEnabled = enabled
                         colorConfigManager.setFabEnabled(enabled)
                         YomidroidAccessibilityService.instance?.updateFabVisibility()
+                    }
+                )
+            }
+
+            // Decoupled mode toggle
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Decoupled Mode",
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                    Text(
+                        text = "Show definitions in app instead of overlay",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = isDecoupledMode,
+                    onCheckedChange = { enabled ->
+                        isDecoupledMode = enabled
+                        colorConfigManager.setDecoupledMode(enabled)
+                        YomidroidAccessibilityService.instance?.loadColors()
                     }
                 )
             }

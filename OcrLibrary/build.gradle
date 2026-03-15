@@ -37,7 +37,7 @@ dependencies {
     // Logger
     implementation 'com.orhanobut:logger:2.2.0'
     // ONNX Runtime
-    implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.14.0'
+    implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.24.2'
     // OpenCV (from Maven Central)
     implementation 'org.opencv:opencv:4.9.0'
     // Clipper (polygon operations for text box expansion)

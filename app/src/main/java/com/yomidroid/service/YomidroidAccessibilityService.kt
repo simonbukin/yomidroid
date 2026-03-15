@@ -44,6 +44,8 @@ import com.yomidroid.config.ColorConfig
 import com.yomidroid.config.ColorConfigManager
 import com.yomidroid.dictionary.DictionaryEngine
 import com.yomidroid.ocr.OcrResult
+import java.util.concurrent.atomic.AtomicReference
+import com.yomidroid.dictionary.LookupResultRepository
 import com.yomidroid.ocr.OcrResultRepository
 import com.yomidroid.ocr.UnifiedOcrContext
 
@@ -116,15 +118,19 @@ class YomidroidAccessibilityService : AccessibilityService() {
 
     // Keep clean screenshot for Anki export
     private var currentScreenshot: Bitmap? = null
+    // Original screenshot dimensions (before scaling) for coordinate mapping
+    private var originalScreenshotWidth = 0
+    private var originalScreenshotHeight = 0
 
     // OCR engine system
     private var ocrEngine: OcrEngine? = null
     private var ocrConfigManager: OcrConfigManager? = null
 
-    private var dictionaryEngine: DictionaryEngine? = null
+    private val dictionaryEngineRef = AtomicReference<DictionaryEngine?>(null)
     private var ankiExporter: AnkiDroidExporter? = null
     private var colorConfigManager: ColorConfigManager? = null
     private var colorConfig: ColorConfig = ColorConfig()
+    private var isDecoupledMode: Boolean = false
 
     // Dictionary config for CSS etc.
     private var dictConfigManager: com.yomidroid.config.DictionaryConfigManager? = null
@@ -133,8 +139,14 @@ class YomidroidAccessibilityService : AccessibilityService() {
     private var inputConfigManager: InputConfigManager? = null
     private var inputConfig: InputConfig = InputConfig()
 
-    // Service-level lookup cache (shared between touch and hardware input)
-    private val lookupCache = mutableMapOf<String, CachedLookup>()
+    // Service-level lookup cache (shared between touch and hardware input) — LRU eviction
+    private val lookupCache = object : LinkedHashMap<String, CachedLookup>(
+        MAX_LOOKUP_CACHE_SIZE + 1, 0.75f, true
+    ) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, CachedLookup>?): Boolean {
+            return size > MAX_LOOKUP_CACHE_SIZE
+        }
+    }
     private var lastLookedUpText: String? = null
     private var lastLookedUpIndex: Int = -1
 
@@ -194,7 +206,7 @@ class YomidroidAccessibilityService : AccessibilityService() {
         Log.d(TAG, "Status bar height: $statusBarHeight")
 
         // Initialize dictionary engine
-        dictionaryEngine = DictionaryEngine(this)
+        dictionaryEngineRef.set(DictionaryEngine(this))
 
         // Initialize Anki exporter
         ankiExporter = AnkiDroidExporter(this)
@@ -259,6 +271,7 @@ class YomidroidAccessibilityService : AccessibilityService() {
      */
     fun loadColors() {
         colorConfig = colorConfigManager?.getConfig() ?: ColorConfig()
+        isDecoupledMode = colorConfigManager?.isDecoupledMode() ?: false
         // Update FAB colors if it exists
         fabView?.updateColors(
             fabColor = colorConfig.fabColor,
@@ -472,7 +485,9 @@ class YomidroidAccessibilityService : AccessibilityService() {
                             if (bitmap != null) {
                                 // Convert to software bitmap for ML Kit
                                 val softwareBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, false)
-                                Log.d(TAG, "Processing OCR on bitmap ${softwareBitmap.width}x${softwareBitmap.height}")
+                                Log.d(TAG, "Screenshot: ${softwareBitmap.width}x${softwareBitmap.height}, " +
+                                    "Screen: ${screenWidth}x${screenHeight}, " +
+                                    "Scale: ${screenWidth.toFloat()/softwareBitmap.width}x${screenHeight.toFloat()/softwareBitmap.height}")
                                 processOcr(softwareBitmap)
                             } else {
                                 Log.e(TAG, "Failed to create bitmap from hardware buffer")
@@ -546,43 +561,71 @@ class YomidroidAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Merges adjacent OCR lines that are on the same horizontal row.
+     * Merges adjacent OCR lines that are on the same row (horizontal) or column (vertical).
      * ML Kit can fragment continuous visual lines into multiple OcrResult objects,
      * which breaks dictionary lookup across word boundaries.
+     * Detects vertical text (manga/VN) by aspect ratio and merges columns right-to-left.
      */
     private fun mergeAdjacentLines(results: List<OcrResult>): List<OcrResult> {
         if (results.size <= 1) return results
 
-        // Sort by vertical position (top of bounding box)
-        val sorted = results.sortedBy { it.lineBounds.top }
+        // Detect orientation: vertical text lines are taller than wide
+        val isVertical = results.map {
+            it.lineBounds.height().toFloat() / it.lineBounds.width().coerceAtLeast(1).toFloat()
+        }.average() > 2.0
 
+        return if (isVertical) {
+            // Sort right-to-left (Japanese vertical reading order), merge columns
+            val sorted = results.sortedByDescending { it.lineBounds.centerX() }
+            mergeByAxis(sorted) { current, next ->
+                val xDiff = Math.abs(current.lineBounds.centerX() - next.lineBounds.centerX())
+                val tolerance = current.lineBounds.width() * 0.5f
+                xDiff <= tolerance
+            }
+        } else {
+            // Horizontal: sort top-to-bottom, merge rows
+            val sorted = results.sortedBy { it.lineBounds.top }
+            mergeByAxis(sorted) { current, next ->
+                val yDiff = Math.abs(current.lineBounds.centerY() - next.lineBounds.centerY())
+                val tolerance = current.lineBounds.height() * 0.5f
+                yDiff <= tolerance
+            }
+        }
+    }
+
+    /**
+     * Merge adjacent OCR results using a predicate to determine if two results
+     * belong to the same group (row or column). Within a group, segments are
+     * ordered by position (left-to-right for horizontal, top-to-bottom for vertical).
+     */
+    private fun mergeByAxis(
+        sorted: List<OcrResult>,
+        shouldMerge: (OcrResult, OcrResult) -> Boolean
+    ): List<OcrResult> {
         val merged = mutableListOf<OcrResult>()
         var current = sorted[0]
 
         for (i in 1 until sorted.size) {
             val next = sorted[i]
 
-            // Check if lines are on the same horizontal row
-            val yDiff = Math.abs(current.lineBounds.centerY() - next.lineBounds.centerY())
-            val tolerance = current.lineBounds.height() * 0.5f
-
-            if (yDiff <= tolerance) {
-                // Merge: determine order by X position
-                val (left, right) = if (current.lineBounds.left < next.lineBounds.left) {
+            if (shouldMerge(current, next)) {
+                // Determine reading order: by top for vertical columns, by left for horizontal rows
+                val (first, second) = if (current.lineBounds.top < next.lineBounds.top ||
+                    (current.lineBounds.top == next.lineBounds.top && current.lineBounds.left < next.lineBounds.left)) {
                     current to next
                 } else {
                     next to current
                 }
 
                 current = OcrResult(
-                    text = left.text + right.text,
+                    text = first.text + second.text,
                     lineBounds = Rect(
-                        minOf(left.lineBounds.left, right.lineBounds.left),
-                        minOf(left.lineBounds.top, right.lineBounds.top),
-                        maxOf(left.lineBounds.right, right.lineBounds.right),
-                        maxOf(left.lineBounds.bottom, right.lineBounds.bottom)
+                        minOf(first.lineBounds.left, second.lineBounds.left),
+                        minOf(first.lineBounds.top, second.lineBounds.top),
+                        maxOf(first.lineBounds.right, second.lineBounds.right),
+                        maxOf(first.lineBounds.bottom, second.lineBounds.bottom)
                     ),
-                    charBounds = left.charBounds + right.charBounds
+                    charBounds = first.charBounds + second.charBounds
                 )
             } else {
                 merged.add(current)
@@ -592,6 +635,22 @@ class YomidroidAccessibilityService : AccessibilityService() {
         merged.add(current)
 
         return merged
+    }
+
+    private fun storeScreenshot(fullBitmap: Bitmap) {
+        val maxDim = 1080f
+        val scale = maxDim / maxOf(fullBitmap.width, fullBitmap.height)
+        if (scale < 1f) {
+            currentScreenshot = Bitmap.createScaledBitmap(
+                fullBitmap,
+                (fullBitmap.width * scale).toInt(),
+                (fullBitmap.height * scale).toInt(),
+                true
+            )
+            fullBitmap.recycle()
+        } else {
+            currentScreenshot = fullBitmap
+        }
     }
 
     private fun showTextOverlay(results: List<OcrResult>, screenshot: Bitmap) {
@@ -623,16 +682,20 @@ class YomidroidAccessibilityService : AccessibilityService() {
         // Share OCR results with repository for Grammar Analyzer
         OcrResultRepository.updateOcrResults(results)
 
-        // Store clean screenshot for Anki export
-        currentScreenshot = screenshot
+        // Store original dimensions for coordinate mapping before any scaling
+        originalScreenshotWidth = screenshot.width
+        originalScreenshotHeight = screenshot.height
+
+        // Store clean screenshot for Anki export (scaled down to save memory)
+        storeScreenshot(screenshot)
 
         // Calculate scale factors for coordinate transformation
-        // This maps ML Kit bounding boxes (in bitmap space) to screen coordinates
-        val scaleX = screenWidth.toFloat() / screenshot.width
-        val scaleY = screenHeight.toFloat() / screenshot.height
+        // This maps ML Kit bounding boxes (in original bitmap space) to screen coordinates
+        val scaleX = screenWidth.toFloat() / originalScreenshotWidth
+        val scaleY = screenHeight.toFloat() / originalScreenshotHeight
         Log.d(TAG, "Scale factors: scaleX=$scaleX, scaleY=$scaleY " +
                    "(screen: ${screenWidth}x${screenHeight}, " +
-                   "bitmap: ${screenshot.width}x${screenshot.height})")
+                   "original bitmap: ${originalScreenshotWidth}x${originalScreenshotHeight})")
 
         overlayView = OverlayTextView(
             context = this,
@@ -736,6 +799,8 @@ class YomidroidAccessibilityService : AccessibilityService() {
         currentOcrResults = emptyList()
         unifiedContext = null
         currentScreenshot = null
+        originalScreenshotWidth = 0
+        originalScreenshotHeight = 0
         charGrid = emptyList()
 
         // Reset cursor toggle, popup lock, and joystick/hat state
@@ -874,7 +939,7 @@ class YomidroidAccessibilityService : AccessibilityService() {
         serviceScope.launch {
             // Search from this position in the unified text (all screen text)
             val searchText = context.unifiedText.substring(unifiedIndex)
-            val entries = dictionaryEngine?.findTerms(searchText) ?: emptyList()
+            val entries = dictionaryEngineRef.get()?.findTerms(searchText) ?: emptyList()
 
             withContext(Dispatchers.Main) {
                 if (entries.isNotEmpty()) {
@@ -896,24 +961,28 @@ class YomidroidAccessibilityService : AccessibilityService() {
                         }
 
                         // Build screen-space textBounds for smart popup positioning
-                        val sx = screenWidth.toFloat() / (currentScreenshot?.width ?: screenWidth)
-                        val sy = screenHeight.toFloat() / (currentScreenshot?.height ?: screenHeight)
+                        val sx = screenWidth.toFloat() / (originalScreenshotWidth.takeIf { it > 0 } ?: screenWidth)
+                        val sy = screenHeight.toFloat() / (originalScreenshotHeight.takeIf { it > 0 } ?: screenHeight)
                         val matchLen = firstEntry.matchedText.length
 
                         val textBounds = buildTextBounds(context, unifiedIndex, matchLen, sx, sy)
 
-                        overlayPopupWebView?.show(
-                            container = container,
-                            entries = entries,
-                            textBounds = textBounds,
-                            maxWidth = (screenWidth * 0.9f).toInt(),
-                            maxHeight = (screenHeight * 0.65f).toInt(),
-                            customCss = null,
-                            onAnkiExport = { entry ->
-                                val sentence = ocrResult.text
-                                exportToAnki(entry, sentence)
-                            }
-                        )
+                        if (isDecoupledMode) {
+                            LookupResultRepository.updateEntries(entries, ocrResult.text)
+                        } else {
+                            overlayPopupWebView?.show(
+                                container = container,
+                                entries = entries,
+                                textBounds = textBounds,
+                                maxWidth = (screenWidth * 0.9f).toInt(),
+                                maxHeight = (screenHeight * 0.65f).toInt(),
+                                customCss = null,
+                                onAnkiExport = { entry ->
+                                    val sentence = ocrResult.text
+                                    exportToAnki(entry, sentence)
+                                }
+                            )
+                        }
 
                         // Save to history (WebView popup path bypasses OverlayTextView's
                         // showDefinitions which normally tracks entries for history saving)
@@ -1022,13 +1091,10 @@ class YomidroidAccessibilityService : AccessibilityService() {
 
         serviceScope.launch {
             val searchText = context.unifiedText.substring(unifiedIndex)
-            val entries = dictionaryEngine?.findTerms(searchText) ?: emptyList()
+            val entries = dictionaryEngineRef.get()?.findTerms(searchText) ?: emptyList()
             val matchLength = entries.firstOrNull()?.matchedText?.length ?: 1
 
             synchronized(lookupCache) {
-                if (lookupCache.size > MAX_LOOKUP_CACHE_SIZE) {
-                    lookupCache.clear()
-                }
                 lookupCache[cacheKey] = CachedLookup(matchLength, entries)
             }
 
@@ -1070,8 +1136,8 @@ class YomidroidAccessibilityService : AccessibilityService() {
             }
 
             // Build textBounds from current highlight or cursor position
-            val sx = screenWidth.toFloat() / (currentScreenshot?.width ?: screenWidth)
-            val sy = screenHeight.toFloat() / (currentScreenshot?.height ?: screenHeight)
+            val sx = screenWidth.toFloat() / (originalScreenshotWidth.takeIf { it > 0 } ?: screenWidth)
+            val sy = screenHeight.toFloat() / (originalScreenshotHeight.takeIf { it > 0 } ?: screenHeight)
             val matchLen = entries.firstOrNull()?.matchedText?.length ?: 1
 
             val textBounds = if (ctx != null && lastLookedUpIndex >= 0) {
@@ -1087,17 +1153,21 @@ class YomidroidAccessibilityService : AccessibilityService() {
                 )
             }
 
-            overlayPopupWebView?.show(
-                container = container,
-                entries = entries,
-                textBounds = textBounds,
-                maxWidth = (screenWidth * 0.9f).toInt(),
-                maxHeight = (screenHeight * 0.65f).toInt(),
-                customCss = null,
-                onAnkiExport = { entry ->
-                    exportToAnki(entry, ocrResult.text)
-                }
-            )
+            if (isDecoupledMode) {
+                LookupResultRepository.updateEntries(entries, ocrResult.text)
+            } else {
+                overlayPopupWebView?.show(
+                    container = container,
+                    entries = entries,
+                    textBounds = textBounds,
+                    maxWidth = (screenWidth * 0.9f).toInt(),
+                    maxHeight = (screenHeight * 0.65f).toInt(),
+                    customCss = null,
+                    onAnkiExport = { entry ->
+                        exportToAnki(entry, ocrResult.text)
+                    }
+                )
+            }
 
             // Save to history (WebView popup path bypasses OverlayTextView's history tracking)
             entries.firstOrNull()?.let { firstEntry ->

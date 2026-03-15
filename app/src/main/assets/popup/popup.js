@@ -414,34 +414,40 @@ function segmentKanjiKana(expression, reading) {
         return [{ text: expression, ruby: null }];
     }
 
-    // Try to match kana runs in reading to distribute furigana
+    // Try to match kana runs in reading to distribute furigana (forward-only)
     var segments = [];
     var readingPos = 0;
     for (var i = 0; i < parts.length; i++) {
         var part = parts[i];
         if (!part.isKanji) {
-            // Find this kana in the remaining reading
-            var kanaIdx = reading.indexOf(part.text, readingPos);
-            if (kanaIdx >= 0) {
-                // Everything before this kana is ruby for previous kanji
+            // Verify kana matches at current reading position (forward-only, no indexOf)
+            if (reading.startsWith(part.text, readingPos)) {
+                // Assign furigana to preceding kanji segment
                 if (segments.length > 0 && segments[segments.length - 1].ruby === '') {
-                    segments[segments.length - 1].ruby = reading.substring(readingPos, kanaIdx);
+                    segments[segments.length - 1].ruby = reading.substring(
+                        segments[segments.length - 1]._rStart, readingPos
+                    );
                 }
                 segments.push({ text: part.text, ruby: null });
-                readingPos = kanaIdx + part.text.length;
+                readingPos += part.text.length;
             } else {
-                segments.push({ text: part.text, ruby: null });
+                // Kana doesn't match at expected position — fallback to whole-word furigana
+                return [{ text: expression, ruby: reading }];
             }
         } else {
-            segments.push({ text: part.text, ruby: '' });
+            // Mark kanji segment with its reading start position
+            segments.push({ text: part.text, ruby: '', _rStart: readingPos });
         }
     }
     // Assign remaining reading to last kanji segment
     if (segments.length > 0 && segments[segments.length - 1].ruby === '') {
-        segments[segments.length - 1].ruby = reading.substring(readingPos);
+        segments[segments.length - 1].ruby = reading.substring(
+            segments[segments.length - 1]._rStart
+        );
     }
-    // Clean up empty rubies
+    // Clean up: remove temp _rStart and empty rubies
     for (var i = 0; i < segments.length; i++) {
+        delete segments[i]._rStart;
         if (segments[i].ruby === '') segments[i].ruby = null;
     }
     return segments;
