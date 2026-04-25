@@ -28,11 +28,6 @@ class OcrEngine(context: Context) : Closeable {
     private val sessionOptions by lazy {
         OrtSession.SessionOptions().apply {
             setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
-            try {
-                addXnnpack(mapOf())
-            } catch (_: Exception) {
-                // XNNPACK not available on this device/build
-            }
         }
     }
 

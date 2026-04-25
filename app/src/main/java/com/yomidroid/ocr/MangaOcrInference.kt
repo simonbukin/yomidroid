@@ -26,11 +26,6 @@ class MangaOcrInference(
     private val env = OrtEnvironment.getEnvironment()
     private val sessionOptions = OrtSession.SessionOptions().apply {
         setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
-        try {
-            addXnnpack(mapOf())
-        } catch (_: Exception) {
-            // XNNPACK not available on this device/build
-        }
     }
     private val encoderSession = env.createSession(encoderPath, sessionOptions)
     private val decoderSession = env.createSession(decoderPath, sessionOptions)

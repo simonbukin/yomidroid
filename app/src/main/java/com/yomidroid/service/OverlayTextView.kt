@@ -32,7 +32,6 @@ class OverlayTextView(
     context: Context,
     private val ocrResults: List<OcrResult>,
     private val unifiedContext: UnifiedOcrContext? = null,  // Unified context for cross-line search
-    private val screenshot: Bitmap,
     private val scaleX: Float = 1f,  // Scale factor: screenWidth / bitmapWidth
     private val scaleY: Float = 1f,  // Scale factor: screenHeight / bitmapHeight
     private val highlightColor: Int = Color.argb(60, 255, 200, 0),  // Configurable highlight color

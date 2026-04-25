@@ -640,16 +640,15 @@ class YomidroidAccessibilityService : AccessibilityService() {
     private fun storeScreenshot(fullBitmap: Bitmap) {
         val maxDim = 1080f
         val scale = maxDim / maxOf(fullBitmap.width, fullBitmap.height)
-        if (scale < 1f) {
-            currentScreenshot = Bitmap.createScaledBitmap(
+        currentScreenshot = if (scale < 1f) {
+            Bitmap.createScaledBitmap(
                 fullBitmap,
                 (fullBitmap.width * scale).toInt(),
                 (fullBitmap.height * scale).toInt(),
                 true
             )
-            fullBitmap.recycle()
         } else {
-            currentScreenshot = fullBitmap
+            fullBitmap
         }
     }
 
@@ -701,7 +700,6 @@ class YomidroidAccessibilityService : AccessibilityService() {
             context = this,
             ocrResults = results,
             unifiedContext = unifiedContext,
-            screenshot = screenshot,
             scaleX = scaleX,
             scaleY = scaleY,
             highlightColor = colorConfig.highlightColor,
