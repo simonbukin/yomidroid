@@ -28,6 +28,10 @@ class OcrEngine(context: Context) : Closeable {
     private val sessionOptions by lazy {
         OrtSession.SessionOptions().apply {
             setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
+            // XNNPACK ships SIMD kernels that crash with SIGSEGV on certain
+            // PP-OCRv3 rec inputs on ARM64 (verified: same model + identical
+            // tensor shape runs cleanly under Python's CPUExecutionProvider).
+            // Keep the default CPU EP — slower but correct.
         }
     }
 

@@ -145,18 +145,6 @@ fun OcrSettingsScreen(onBack: () -> Unit) {
             Spacer(modifier = Modifier.height(8.dp))
 
             InfoCard(
-                title = "RapidOCR",
-                points = listOf(
-                    "PaddleOCR-based ONNX engine",
-                    "Excellent for Japanese text",
-                    "Handles manga and vertical text well",
-                    "Runs entirely on-device"
-                )
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            InfoCard(
                 title = "Manga OCR",
                 points = listOf(
                     "Specialized for manga/comic text",

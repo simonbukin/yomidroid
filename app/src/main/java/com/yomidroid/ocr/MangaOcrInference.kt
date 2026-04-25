@@ -26,6 +26,8 @@ class MangaOcrInference(
     private val env = OrtEnvironment.getEnvironment()
     private val sessionOptions = OrtSession.SessionOptions().apply {
         setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
+        // No XNNPACK — its ARM64 SIMD kernels SIGSEGV on certain inputs.
+        // See OcrLibrary/.../OcrEngine.kt for the same workaround.
     }
     private val encoderSession = env.createSession(encoderPath, sessionOptions)
     private val decoderSession = env.createSession(decoderPath, sessionOptions)
@@ -134,32 +136,33 @@ class MangaOcrInference(
     }
 
     private fun preprocessImage(bitmap: Bitmap): OnnxTensor {
+        // Match kha-white/manga-ocr's preprocessor exactly:
+        //   img.convert('L').convert('RGB')               # grayscale -> RGB
+        //   ViTImageProcessor(size=224, image_mean=[0.5]*3, image_std=[0.5]*3)
+        // ViTImageProcessor with int size=224 stretches to (224, 224) with PIL
+        // BILINEAR — no aspect-preserving letterbox. Earlier letterbox attempt
+        // was wrong; the model was trained on stretched square crops.
         val scaled = Bitmap.createScaledBitmap(bitmap, IMAGE_SIZE, IMAGE_SIZE, true)
         val pixels = IntArray(IMAGE_SIZE * IMAGE_SIZE)
         scaled.getPixels(pixels, 0, IMAGE_SIZE, 0, 0, IMAGE_SIZE, IMAGE_SIZE)
         if (scaled !== bitmap) scaled.recycle()
 
-        // Convert to [1, 3, 224, 224] NCHW float tensor, normalized (pixel/255 - 0.5) / 0.5
-        val buffer = FloatBuffer.allocate(3 * IMAGE_SIZE * IMAGE_SIZE)
         val channelSize = IMAGE_SIZE * IMAGE_SIZE
-
-        // R channel
+        val buffer = FloatBuffer.allocate(3 * channelSize)
         for (i in 0 until channelSize) {
-            val r = (pixels[i] shr 16 and 0xFF) / 255f
-            buffer.put(i, (r - 0.5f) / 0.5f)
+            val px = pixels[i]
+            val r = (px shr 16) and 0xFF
+            val g = (px shr 8) and 0xFF
+            val b = px and 0xFF
+            // Rec. 601 luma; PIL "L" mode uses the same coefficients.
+            val gray = (0.299f * r + 0.587f * g + 0.114f * b) / 255f
+            val norm = (gray - 0.5f) / 0.5f
+            buffer.put(i, norm)
+            buffer.put(channelSize + i, norm)
+            buffer.put(2 * channelSize + i, norm)
         }
-        // G channel
-        for (i in 0 until channelSize) {
-            val g = (pixels[i] shr 8 and 0xFF) / 255f
-            buffer.put(channelSize + i, (g - 0.5f) / 0.5f)
-        }
-        // B channel
-        for (i in 0 until channelSize) {
-            val b = (pixels[i] and 0xFF) / 255f
-            buffer.put(2 * channelSize + i, (b - 0.5f) / 0.5f)
-        }
-
         buffer.rewind()
+
         return OnnxTensor.createTensor(
             env,
             buffer,

@@ -4,6 +4,7 @@ import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import android.content.res.AssetManager
+import android.util.Log
 import com.benjaminwan.ocrlibrary.models.RecResult
 import org.opencv.core.Mat
 import org.opencv.core.Size
@@ -41,24 +42,24 @@ class Rec(private val ortEnv: OrtEnvironment, assetManager: AssetManager, modelN
     }
 
     fun getRecResult(src: Mat): RecResult {
-        val scale = dstHeight / src.rows()
-        val dstWidth = (src.cols() * scale).toInt().toDouble()
+        // Reject degenerate crops; an empty tensor crashes libonnxruntime.
+        if (src.cols() < 4 || src.rows() < 4 || src.channels() != 3) {
+            Log.w(TAG, "skip rec: degenerate input ${src.cols()}x${src.rows()} ch=${src.channels()}")
+            return RecResult("", emptyList())
+        }
+
+        val scale = dstHeight / src.rows().toDouble()
+        val dstWidth = (src.cols() * scale).toInt().coerceAtLeast(MIN_REC_WIDTH)
         val srcResize = Mat()
-        resize(src, srcResize, Size(dstWidth, dstHeight))
+        resize(src, srcResize, Size(dstWidth.toDouble(), dstHeight))
         val inputTensorValues = substractMeanNormalize(srcResize, meanValues, normValues)
         val inputShape = longArrayOf(1, srcResize.channels().toLong(), srcResize.rows().toLong(), srcResize.cols().toLong())
         val inputName = session.inputNames.iterator().next()
         OnnxTensor.createTensor(ortEnv, inputTensorValues, inputShape).use { inputTensor ->
             session.run(Collections.singletonMap(inputName, inputTensor)).use { output ->
                 val onnxValue = output.first().value
-                /*val tensorInfo = onnxValue.info as TensorInfo
-                val type = onnxValue.type
-                Logger.i("info=${tensorInfo},type=$type")*/
                 val values = onnxValue.value as Array<Array<FloatArray>>
                 val outputData = values.flatMap { a -> a.flatMap { b -> listOf(b) } }
-                /*val outHeight: Int = tensorInfo.shape[1].toInt()
-                val outWidth: Int = tensorInfo.shape[2].toInt()
-                Logger.i("$outHeight,$outWidth")*/
                 return scoreToTextLine(outputData)
             }
         }
@@ -67,7 +68,9 @@ class Rec(private val ortEnv: OrtEnvironment, assetManager: AssetManager, modelN
     fun getRecResults(mats: List<Mat>): List<RecResult> = mats.map { getRecResult(it) }
 
     companion object {
+        private const val TAG = "Rec"
         private const val dstHeight = 48.0
+        private const val MIN_REC_WIDTH = 16
         private val meanValues = floatArrayOf(127.5F, 127.5F, 127.5F)
         private val normValues = floatArrayOf(1.0F / 127.5F, 1.0F / 127.5F, 1.0F / 127.5F)
     }

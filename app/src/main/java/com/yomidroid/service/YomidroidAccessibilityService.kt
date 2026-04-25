@@ -562,80 +562,174 @@ class YomidroidAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Merges adjacent OCR lines that are on the same row (horizontal) or column (vertical).
-     * ML Kit can fragment continuous visual lines into multiple OcrResult objects,
-     * which breaks dictionary lookup across word boundaries.
-     * Detects vertical text (manga/VN) by aspect ratio and merges columns right-to-left.
+     * Cleans up raw OCR output by joining fragments that the engine split across
+     * the *same* visual line (or column for vertical text). Keeps each visual
+     * line as its own OcrResult — this is essential for the cursor-hover lookup
+     * UX, which needs per-line bounds and per-character bbox precision. Cross-
+     * line / paragraph-level grouping was tried here and broke that UX (whole
+     * textbox highlighted, character bounds smeared across multiple lines);
+     * UnifiedOcrContext already concatenates lines into a single string for
+     * cross-line word matching, so a paragraph-level merge is unnecessary.
      */
     private fun mergeAdjacentLines(results: List<OcrResult>): List<OcrResult> {
         if (results.size <= 1) return results
 
-        // Detect orientation: vertical text lines are taller than wide
-        val isVertical = results.map {
-            it.lineBounds.height().toFloat() / it.lineBounds.width().coerceAtLeast(1).toFloat()
-        }.average() > 2.0
+        val (vertical, horizontal) = results.partition { isVerticalResult(it) }
+        val blocks = mutableListOf<OcrResult>()
+        blocks += groupIntoBlocks(horizontal, vertical = false)
+        blocks += groupIntoBlocks(vertical, vertical = true)
+        Log.d(TAG, "mergeAdjacentLines: ${results.size} OCR lines -> ${blocks.size} blocks")
+        return blocks
+    }
 
-        return if (isVertical) {
-            // Sort right-to-left (Japanese vertical reading order), merge columns
-            val sorted = results.sortedByDescending { it.lineBounds.centerX() }
-            mergeByAxis(sorted) { current, next ->
-                val xDiff = Math.abs(current.lineBounds.centerX() - next.lineBounds.centerX())
-                val tolerance = current.lineBounds.width() * 0.5f
-                xDiff <= tolerance
+    private fun isVerticalResult(result: OcrResult): Boolean {
+        val w = result.lineBounds.width().coerceAtLeast(1).toFloat()
+        return result.lineBounds.height().toFloat() / w > 1.5f
+    }
+
+    private fun groupIntoBlocks(
+        results: List<OcrResult>,
+        vertical: Boolean
+    ): List<OcrResult> {
+        if (results.isEmpty()) return emptyList()
+        if (results.size == 1) return results
+
+        val medianH = median(results.map { it.lineBounds.height() })
+        val medianW = median(results.map { it.lineBounds.width() })
+
+        // Transitive grouping: a result joins a block if it's adjacent to ANY
+        // existing member. This survives line-height variation that would break
+        // a sequential pairwise merge.
+        val visited = BooleanArray(results.size)
+        val blocks = mutableListOf<List<OcrResult>>()
+
+        for (i in results.indices) {
+            if (visited[i]) continue
+            val block = mutableListOf(results[i])
+            visited[i] = true
+
+            var grew = true
+            while (grew) {
+                grew = false
+                for (j in results.indices) {
+                    if (visited[j]) continue
+                    if (block.any { adjacentForBlock(it, results[j], vertical, medianH, medianW) }) {
+                        block += results[j]
+                        visited[j] = true
+                        grew = true
+                    }
+                }
             }
-        } else {
-            // Horizontal: sort top-to-bottom, merge rows
-            val sorted = results.sortedBy { it.lineBounds.top }
-            mergeByAxis(sorted) { current, next ->
-                val yDiff = Math.abs(current.lineBounds.centerY() - next.lineBounds.centerY())
-                val tolerance = current.lineBounds.height() * 0.5f
-                yDiff <= tolerance
-            }
+            blocks += block
         }
+
+        return blocks.map { mergeBlock(it, vertical) }
     }
 
     /**
-     * Merge adjacent OCR results using a predicate to determine if two results
-     * belong to the same group (row or column). Within a group, segments are
-     * ordered by position (left-to-right for horizontal, top-to-bottom for vertical).
+     * Two OcrResults belong to the same line/column iff they overlap on the
+     * cross-axis and are close on the reading axis. Cross-line merging is
+     * deliberately not done here — it destroys per-line cursor precision.
      */
-    private fun mergeByAxis(
-        sorted: List<OcrResult>,
-        shouldMerge: (OcrResult, OcrResult) -> Boolean
-    ): List<OcrResult> {
-        val merged = mutableListOf<OcrResult>()
-        var current = sorted[0]
+    private fun adjacentForBlock(
+        a: OcrResult,
+        b: OcrResult,
+        vertical: Boolean,
+        @Suppress("UNUSED_PARAMETER") medianH: Float,
+        @Suppress("UNUSED_PARAMETER") medianW: Float
+    ): Boolean {
+        val ar = a.lineBounds
+        val br = b.lineBounds
+        val xGap = axisGap(ar.left, ar.right, br.left, br.right)
+        val yGap = axisGap(ar.top, ar.bottom, br.top, br.bottom)
+        val xOverlap = (minOf(ar.right, br.right) - maxOf(ar.left, br.left)).coerceAtLeast(0)
+        val yOverlap = (minOf(ar.bottom, br.bottom) - maxOf(ar.top, br.top)).coerceAtLeast(0)
+        val minW = minOf(ar.width(), br.width()).coerceAtLeast(1)
+        val minH = minOf(ar.height(), br.height()).coerceAtLeast(1)
 
+        return if (vertical) {
+            // Same column only: X overlaps significantly and Y-gap < ~1 line.
+            xOverlap.toFloat() / minW >= 0.3f && yGap <= minH.toFloat()
+        } else {
+            // Same horizontal line only: Y overlaps significantly and X-gap < ~1 line.
+            yOverlap.toFloat() / minH >= 0.3f && xGap <= minH.toFloat()
+        }
+    }
+
+    /** Distance between two intervals on the same axis; 0 if they overlap. */
+    private fun axisGap(aLow: Int, aHigh: Int, bLow: Int, bHigh: Int): Float = when {
+        aHigh < bLow -> (bLow - aHigh).toFloat()
+        bHigh < aLow -> (aLow - bHigh).toFloat()
+        else -> 0f
+    }
+
+    /**
+     * Concatenate a block's items into a single OcrResult in reading order.
+     * Horizontal: bucket items into lines, sort lines top→bottom, sort within
+     * each line left→right.
+     * Vertical: bucket items into columns, sort columns right→left, sort within
+     * each column top→bottom.
+     */
+    private fun mergeBlock(items: List<OcrResult>, vertical: Boolean): OcrResult {
+        if (items.size == 1) return items[0]
+
+        val ordered = if (vertical) {
+            val tolerance = items.minOf { it.lineBounds.width() } * 0.5f
+            bucketByAxis(items, tolerance) { it.lineBounds.centerX().toFloat() }
+                .sortedByDescending { col -> col.maxOf { it.lineBounds.centerX() } }
+                .flatMap { col -> col.sortedBy { it.lineBounds.top } }
+        } else {
+            val tolerance = items.minOf { it.lineBounds.height() } * 0.5f
+            bucketByAxis(items, tolerance) { it.lineBounds.centerY().toFloat() }
+                .sortedBy { line -> line.minOf { it.lineBounds.top } }
+                .flatMap { line -> line.sortedBy { it.lineBounds.left } }
+        }
+
+        val text = buildString { for (r in ordered) append(r.text) }
+        val charBounds = ordered.flatMap { it.charBounds }
+        val bounds = Rect(
+            ordered.minOf { it.lineBounds.left },
+            ordered.minOf { it.lineBounds.top },
+            ordered.maxOf { it.lineBounds.right },
+            ordered.maxOf { it.lineBounds.bottom }
+        )
+        return OcrResult(text, bounds, charBounds)
+    }
+
+    /**
+     * 1-D bucketing: sort items by [coord], then start a new bucket whenever
+     * the next item's coord is more than [tolerance] away from the running mean
+     * of the current bucket. Used to group fragments into the same line/column
+     * before sorting them in reading order.
+     */
+    private fun bucketByAxis(
+        items: List<OcrResult>,
+        tolerance: Float,
+        coord: (OcrResult) -> Float
+    ): List<List<OcrResult>> {
+        if (items.isEmpty()) return emptyList()
+        val sorted = items.sortedBy { coord(it) }
+        val buckets = mutableListOf<MutableList<OcrResult>>(mutableListOf(sorted[0]))
+        var mean = coord(sorted[0])
         for (i in 1 until sorted.size) {
-            val next = sorted[i]
-
-            if (shouldMerge(current, next)) {
-                // Determine reading order: by top for vertical columns, by left for horizontal rows
-                val (first, second) = if (current.lineBounds.top < next.lineBounds.top ||
-                    (current.lineBounds.top == next.lineBounds.top && current.lineBounds.left < next.lineBounds.left)) {
-                    current to next
-                } else {
-                    next to current
-                }
-
-                current = OcrResult(
-                    text = first.text + second.text,
-                    lineBounds = Rect(
-                        minOf(first.lineBounds.left, second.lineBounds.left),
-                        minOf(first.lineBounds.top, second.lineBounds.top),
-                        maxOf(first.lineBounds.right, second.lineBounds.right),
-                        maxOf(first.lineBounds.bottom, second.lineBounds.bottom)
-                    ),
-                    charBounds = first.charBounds + second.charBounds
-                )
+            val c = coord(sorted[i])
+            if (c - mean <= tolerance) {
+                buckets.last() += sorted[i]
+                mean = buckets.last().map { coord(it) }.average().toFloat()
             } else {
-                merged.add(current)
-                current = next
+                buckets += mutableListOf(sorted[i])
+                mean = c
             }
         }
-        merged.add(current)
+        return buckets
+    }
 
-        return merged
+    private fun median(values: List<Int>): Float {
+        if (values.isEmpty()) return 0f
+        val sorted = values.sorted()
+        val mid = sorted.size / 2
+        return if (sorted.size % 2 == 1) sorted[mid].toFloat()
+        else (sorted[mid - 1] + sorted[mid]) / 2f
     }
 
     private fun storeScreenshot(fullBitmap: Bitmap) {

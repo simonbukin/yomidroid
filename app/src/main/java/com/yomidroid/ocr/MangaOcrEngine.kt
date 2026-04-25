@@ -27,6 +27,9 @@ class MangaOcrEngine(private val context: Context) : OcrEngine {
     companion object {
         private const val TAG = "MangaOcrEngine"
         private const val PADDING = 50
+        // Small margin around each detected line crop, mirroring the 10px
+        // background margin Manga109 training crops include.
+        private const val LINE_MARGIN = 10
     }
 
     override suspend fun processImage(bitmap: Bitmap): Result<List<OcrResult>> {
@@ -58,41 +61,44 @@ class MangaOcrEngine(private val context: Context) : OcrEngine {
 
                 Log.d(TAG, "PaddleOCR detected ${detResult.detResults.size} regions in ${detResult.fullTime}ms")
 
-                // For each detected region, crop and run manga-ocr recognition
+                // Manga-OCR was trained on whole text bubbles, but the cursor-
+                // hover dictionary UX needs per-line OcrResults with per-char
+                // bounds — bubble-level recognition gives no character-position
+                // breakdown to recover. Trade some recognition accuracy for
+                // per-line precision and run one rec call per detected line,
+                // adding a small margin matching Manga109 training crops.
                 val results = detResult.detResults.mapNotNull { det ->
                     val bounds = pointsToRect(det.points)
                     if (bounds.width() <= 0 || bounds.height() <= 0) return@mapNotNull null
 
-                    // Clamp bounds to bitmap dimensions
-                    val clampedBounds = Rect(
-                        bounds.left.coerceIn(0, bitmap.width - 1),
-                        bounds.top.coerceIn(0, bitmap.height - 1),
-                        bounds.right.coerceIn(1, bitmap.width),
-                        bounds.bottom.coerceIn(1, bitmap.height)
+                    val expanded = Rect(
+                        (bounds.left - LINE_MARGIN).coerceAtLeast(0),
+                        (bounds.top - LINE_MARGIN).coerceAtLeast(0),
+                        (bounds.right + LINE_MARGIN).coerceAtMost(bitmap.width),
+                        (bounds.bottom + LINE_MARGIN).coerceAtMost(bitmap.height)
                     )
-
-                    if (clampedBounds.width() <= 0 || clampedBounds.height() <= 0) return@mapNotNull null
+                    if (expanded.width() <= 0 || expanded.height() <= 0) return@mapNotNull null
 
                     val crop = Bitmap.createBitmap(
                         bitmap,
-                        clampedBounds.left,
-                        clampedBounds.top,
-                        clampedBounds.width(),
-                        clampedBounds.height()
+                        expanded.left,
+                        expanded.top,
+                        expanded.width(),
+                        expanded.height()
                     )
 
                     try {
                         val text = inference.recognize(crop)
                         if (text.isBlank()) return@mapNotNull null
 
-                        val charBounds = synthesizeCharBounds(text, clampedBounds)
-                        OcrResult(text, clampedBounds, charBounds)
+                        val charBounds = synthesizeCharBounds(text, expanded)
+                        OcrResult(text, expanded, charBounds)
                     } finally {
                         if (crop !== bitmap) crop.recycle()
                     }
                 }
 
-                Log.d(TAG, "Manga OCR recognized ${results.size} text regions")
+                Log.d(TAG, "Manga OCR recognized ${results.size}/${detResult.detResults.size} lines")
                 Result.success(results)
             } catch (e: Exception) {
                 Log.e(TAG, "Manga OCR failed: ${e.message}", e)
