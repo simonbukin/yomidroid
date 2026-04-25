@@ -229,6 +229,19 @@ class OverlayTextView(
     private var lastShownSentence: String = ""
     private var lastSavedExpression: String? = null
 
+    // Reusable Paint objects for draw methods (avoid per-frame allocations)
+    private val reusableBgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val reusableBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val reusableTextPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val reusableShadowPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val reusableHeadPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val reusableReadPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val reusableDeinPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val reusableGlossNumPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val reusableDividerPaint = Paint()
+    private val reusableCounterPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val reusableRect = RectF()
+
     /**
      * Pre-computed tight bounding boxes for hit testing, in view-local coordinates.
      * ML Kit's lineBounds includes extra padding which causes cursor misalignment,
@@ -316,7 +329,7 @@ class OverlayTextView(
             selectedHighlightPaint.color = Color.argb((140 * highlightAlpha).toInt(), 80, 200, 120)
             for (i in 0 until selectedMatchLength) {
                 val charIdx = selectedCharIndex + i
-                val selectedBounds = selectedResult!!.charBounds.getOrNull(charIdx)
+                val selectedBounds = selectedResult?.charBounds?.getOrNull(charIdx)
                 selectedBounds?.let {
                     val adjusted = it.toScreenCoords()
                     adjusted.offset(offsetX, offsetY)
@@ -349,15 +362,15 @@ class OverlayTextView(
         val px = popupX.coerceIn(16f, width - popupWidth - 16f)
         val py = popupY.coerceIn(16f, height - popupHeight - 16f)
 
-        // Apply popup alpha
-        val bgPaint = Paint(popupBgPaint).apply { alpha = (250 * popupAlpha).toInt() }
-        val borderPaint = Paint(popupBorderPaint).apply { alpha = (60 * popupAlpha).toInt() }
-        val textPaint = Paint(readingPaint).apply { alpha = (180 * popupAlpha).toInt() }
+        // Apply popup alpha using reusable paints
+        reusableBgPaint.set(popupBgPaint); reusableBgPaint.alpha = (250 * popupAlpha).toInt()
+        reusableBorderPaint.set(popupBorderPaint); reusableBorderPaint.alpha = (60 * popupAlpha).toInt()
+        reusableTextPaint.set(readingPaint); reusableTextPaint.alpha = (180 * popupAlpha).toInt()
 
-        val rect = RectF(px, py, px + popupWidth, py + popupHeight)
-        canvas.drawRoundRect(rect, cornerRadius, cornerRadius, bgPaint)
-        canvas.drawRoundRect(rect, cornerRadius, cornerRadius, borderPaint)
-        canvas.drawText(message, px + padding, py + popupHeight / 2 + readingPaint.textSize / 3, textPaint)
+        reusableRect.set(px, py, px + popupWidth, py + popupHeight)
+        canvas.drawRoundRect(reusableRect, cornerRadius, cornerRadius, reusableBgPaint)
+        canvas.drawRoundRect(reusableRect, cornerRadius, cornerRadius, reusableBorderPaint)
+        canvas.drawText(message, px + padding, py + popupHeight / 2 + readingPaint.textSize / 3, reusableTextPaint)
     }
 
     /**
@@ -479,7 +492,7 @@ class OverlayTextView(
             }
         } else if (selectedResult != null && selectedCharIndex >= 0) {
             for (i in 0 until selectedMatchLength) {
-                val bounds = selectedResult!!.charBounds.getOrNull(selectedCharIndex + i)
+                val bounds = selectedResult?.charBounds?.getOrNull(selectedCharIndex + i)
                 if (bounds != null) {
                     val top = bounds.top * scaleY + offsetY
                     val bottom = bounds.bottom * scaleY + offsetY
@@ -528,19 +541,17 @@ class OverlayTextView(
 
         popupBounds = RectF(finalX, finalY, finalX + popupWidth, finalY + popupHeight)
 
-        // Draw background
-        val shadowRect = RectF(finalX + 2f * density, finalY + 2f * density,
-                               finalX + popupWidth + 2f * density, finalY + popupHeight + 2f * density)
-        val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb((40 * alpha).toInt(), 0, 0, 0)
-        }
-        canvas.drawRoundRect(shadowRect, cornerRadius, cornerRadius, shadowPaint)
+        // Draw background (reuse paint objects)
+        reusableRect.set(finalX + 2f * density, finalY + 2f * density,
+                         finalX + popupWidth + 2f * density, finalY + popupHeight + 2f * density)
+        reusableShadowPaint.color = Color.argb((40 * alpha).toInt(), 0, 0, 0)
+        canvas.drawRoundRect(reusableRect, cornerRadius, cornerRadius, reusableShadowPaint)
 
-        val bgPaint = Paint(popupBgPaint).apply { this.alpha = (250 * alpha).toInt() }
-        val borderPaint = Paint(popupBorderPaint).apply { this.alpha = (60 * alpha).toInt() }
-        val rect = RectF(finalX, finalY, finalX + popupWidth, finalY + popupHeight)
-        canvas.drawRoundRect(rect, cornerRadius, cornerRadius, bgPaint)
-        canvas.drawRoundRect(rect, cornerRadius, cornerRadius, borderPaint)
+        reusableBgPaint.set(popupBgPaint); reusableBgPaint.alpha = (250 * alpha).toInt()
+        reusableBorderPaint.set(popupBorderPaint); reusableBorderPaint.alpha = (60 * alpha).toInt()
+        reusableRect.set(finalX, finalY, finalX + popupWidth, finalY + popupHeight)
+        canvas.drawRoundRect(reusableRect, cornerRadius, cornerRadius, reusableBgPaint)
+        canvas.drawRoundRect(reusableRect, cornerRadius, cornerRadius, reusableBorderPaint)
 
         // Draw entry counter ("1 of 3") when multiple entries
         val counterHeight = if (entries.size > 1) 18f * density else 0f
@@ -558,8 +569,8 @@ class OverlayTextView(
                 if (i == entryLayouts.lastIndex) visibleIndex = i
             }
             val counterText = "${visibleIndex + 1} of ${entries.size}"
-            val counterPaint = Paint(entryCounterPaint).apply { this.alpha = (alpha * 255).toInt() }
-            canvas.drawText(counterText, finalX + popupWidth / 2, finalY + paddingV / 2 + counterPaint.textSize / 3, counterPaint)
+            reusableCounterPaint.set(entryCounterPaint); reusableCounterPaint.alpha = (alpha * 255).toInt()
+            canvas.drawText(counterText, finalX + popupWidth / 2, finalY + paddingV / 2 + reusableCounterPaint.textSize / 3, reusableCounterPaint)
         }
 
         // Clip content area for scrolling (shifted down by counter height)
@@ -569,15 +580,13 @@ class OverlayTextView(
         // Clear Anki button bounds list
         ankiButtonBoundsList.clear()
 
-        // Draw each entry
-        val headPaint = Paint(headwordPaint).apply { this.alpha = (255 * alpha).toInt() }
-        val readPaint = Paint(readingPaint).apply { this.alpha = (180 * alpha).toInt() }
-        val deinPaint = Paint(deinflectPaint).apply { this.alpha = (150 * alpha).toInt() }
-        val glossNumPaint = Paint(glossNumberPaint).apply { this.alpha = (120 * alpha).toInt() }
-        val dividerPaint = Paint().apply {
-            color = Color.argb((30 * alpha).toInt(), 255, 255, 255)
-            strokeWidth = 1f * density
-        }
+        // Draw each entry (reuse paint objects)
+        reusableHeadPaint.set(headwordPaint); reusableHeadPaint.alpha = (255 * alpha).toInt()
+        reusableReadPaint.set(readingPaint); reusableReadPaint.alpha = (180 * alpha).toInt()
+        reusableDeinPaint.set(deinflectPaint); reusableDeinPaint.alpha = (150 * alpha).toInt()
+        reusableGlossNumPaint.set(glossNumberPaint); reusableGlossNumPaint.alpha = (120 * alpha).toInt()
+        reusableDividerPaint.color = Color.argb((30 * alpha).toInt(), 255, 255, 255)
+        reusableDividerPaint.strokeWidth = 1f * density
 
         var currentY = finalY + paddingV + counterHeight - popupScrollY
 
@@ -670,7 +679,7 @@ class OverlayTextView(
             var y = currentY + headwordPaint.textSize * 0.85f
 
             // Draw headword
-            canvas.drawText(entry.expression, finalX + paddingH, y, headPaint)
+            canvas.drawText(entry.expression, finalX + paddingH, y, reusableHeadPaint)
             var badgeX = finalX + paddingH + headwordPaint.measureText(entry.expression) + 8f * density
 
             // Draw frequency badge (dynamic color per entry)
@@ -741,7 +750,7 @@ class OverlayTextView(
             // Draw reading (if different from expression)
             if (entry.reading.isNotEmpty() && entry.reading != entry.expression) {
                 y += readingPaint.textSize + 2f * density
-                canvas.drawText(entry.reading, finalX + paddingH, y, readPaint)
+                canvas.drawText(entry.reading, finalX + paddingH, y, reusableReadPaint)
             }
 
             // Draw pitch accent contour
@@ -767,7 +776,7 @@ class OverlayTextView(
             // Draw deinflection path
             if (entry.deinflectionPath.isNotEmpty()) {
                 y += deinflectPaint.textSize + 8f * density
-                canvas.drawText("→ ${entry.deinflectionPath}", finalX + paddingH, y, deinPaint)
+                canvas.drawText("→ ${entry.deinflectionPath}", finalX + paddingH, y, reusableDeinPaint)
             }
 
             // Draw glossary
@@ -776,7 +785,7 @@ class OverlayTextView(
                 entryLayout.glossLayouts.forEachIndexed { glossIndex, layout ->
                     y += 4f * density
                     val numText = "${glossIndex + 1}."
-                    canvas.drawText(numText, finalX + paddingH, y + glossPaint.textSize * 0.85f, glossNumPaint)
+                    canvas.drawText(numText, finalX + paddingH, y + glossPaint.textSize * 0.85f, reusableGlossNumPaint)
                     canvas.save()
                     canvas.translate(finalX + paddingH + glossNumberWidth, y)
                     layout.draw(canvas)
@@ -786,17 +795,17 @@ class OverlayTextView(
             }
 
             // Draw source label
-            val srcLabelPaint = Paint(sourceLabelPaint).apply { this.alpha = (alpha * 255).toInt() }
+            reusableTextPaint.set(sourceLabelPaint); reusableTextPaint.alpha = (alpha * 255).toInt()
             val sourceLabel = entry.sourceLabel
             val labelWidth = sourceLabelPaint.measureText(sourceLabel)
-            canvas.drawText(sourceLabel, maxContentX - labelWidth, currentY + entryLayout.height - 4f * density, srcLabelPaint)
+            canvas.drawText(sourceLabel, maxContentX - labelWidth, currentY + entryLayout.height - 4f * density, reusableTextPaint)
 
             currentY += entryLayout.height
 
             // Draw divider (if not last entry)
             if (index < entryLayouts.size - 1) {
                 val dividerY = currentY + dividerHeight / 2
-                canvas.drawLine(finalX + paddingH, dividerY, finalX + popupWidth - paddingH, dividerY, dividerPaint)
+                canvas.drawLine(finalX + paddingH, dividerY, finalX + popupWidth - paddingH, dividerY, reusableDividerPaint)
                 currentY += dividerHeight
             }
         }

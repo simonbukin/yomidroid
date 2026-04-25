@@ -20,6 +20,10 @@ object OcrResultRepository {
     /** The full OCR results with bounding boxes from the latest scan */
     val latestOcrResults: StateFlow<List<OcrResult>> = _latestOcrResults.asStateFlow()
 
+    private val _latestSelectedSentence = MutableStateFlow<String?>(null)
+    /** The specific OCR line the user tapped (for translation pre-fill) */
+    val latestSelectedSentence: StateFlow<String?> = _latestSelectedSentence.asStateFlow()
+
     private val _lastUpdateTimestamp = MutableStateFlow(0L)
     /** Timestamp of the last update (for UI refresh triggers) */
     val lastUpdateTimestamp: StateFlow<Long> = _lastUpdateTimestamp.asStateFlow()
@@ -32,6 +36,14 @@ object OcrResultRepository {
         _latestOcrResults.value = results
         _latestOcrText.value = results.joinToString("\n") { it.text }
         _lastUpdateTimestamp.value = System.currentTimeMillis()
+    }
+
+    /**
+     * Called when user taps a specific OCR line in the overlay.
+     * Stores just that line for translation pre-fill.
+     */
+    fun updateSelectedSentence(sentence: String) {
+        _latestSelectedSentence.value = sentence
     }
 
     /**
@@ -49,6 +61,7 @@ object OcrResultRepository {
     fun clearAll() {
         _latestOcrResults.value = emptyList()
         _latestOcrText.value = null
+        _latestSelectedSentence.value = null
         _lastUpdateTimestamp.value = 0L
     }
 

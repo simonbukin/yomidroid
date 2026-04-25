@@ -24,7 +24,8 @@ data class TranslationResult(
     val literal: String?,
     val interlinear: InterlinearResult?,
     val backend: String,          // Which backend produced this (for debugging/display)
-    val cached: Boolean = false   // Whether this was a cache hit
+    val cached: Boolean = false,  // Whether this was a cache hit
+    val notes: String? = null     // Grammar/nuance notes from LLM
 )
 
 /**

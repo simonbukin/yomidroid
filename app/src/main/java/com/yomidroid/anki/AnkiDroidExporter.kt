@@ -91,46 +91,19 @@ class AnkiDroidExporter(private val context: Context) {
 
     /**
      * Check if we have permission to access AnkiDroid API.
-     * This checks the runtime permission, API availability, and actually tests the connection.
+     * Lightweight check only — no content provider queries.
      */
     fun hasPermission(): Boolean {
-        // First check if we have the runtime permission
         val hasRuntimePermission = ContextCompat.checkSelfPermission(
             context,
             ANKIDROID_PERMISSION
         ) == PackageManager.PERMISSION_GRANTED
 
-        // Also check if the API reports it's available
         val apiAvailable = AddContentApi.getAnkiDroidPackageName(context) != null
 
         Log.d(TAG, "Permission check - runtime: $hasRuntimePermission, api: $apiAvailable")
 
-        // If basic checks pass, try an actual API call to verify
-        if (hasRuntimePermission || apiAvailable) {
-            return testApiAccess()
-        }
-
-        return false
-    }
-
-    /**
-     * Actually test if we can access the AnkiDroid API.
-     * This catches the case where Android permission is granted but AnkiDroid
-     * hasn't enabled API access for this app in its settings.
-     */
-    private fun testApiAccess(): Boolean {
-        return try {
-            val api = AddContentApi(context)
-            // Try to get deck list - this will throw SecurityException if not permitted
-            api.deckList
-            true
-        } catch (e: SecurityException) {
-            Log.w(TAG, "API access test failed - AnkiDroid API not enabled for this app: ${e.message}")
-            false
-        } catch (e: Exception) {
-            Log.w(TAG, "API access test failed: ${e.message}")
-            false
-        }
+        return hasRuntimePermission && apiAvailable
     }
 
     /**
@@ -166,16 +139,33 @@ class AnkiDroidExporter(private val context: Context) {
      * Get available decks from AnkiDroid.
      * Returns map of deck ID to deck name.
      */
-    fun getDecks(): Map<Long, String> {
+    /**
+     * Load decks and models in a single API session.
+     * Uses one AddContentApi instance so the provider stays alive across both queries.
+     */
+    fun getDecksAndModels(): Pair<Map<Long, String>, Map<Long, String>> {
         if (!isAnkiDroidInstalled()) {
-            Log.d(TAG, "getDecks: AnkiDroid not installed")
-            return emptyMap()
+            Log.d(TAG, "getDecksAndModels: AnkiDroid not installed")
+            return emptyMap<Long, String>() to emptyMap()
         }
 
-        if (!hasPermission()) {
-            Log.d(TAG, "getDecks: No permission")
-            return emptyMap()
+        return try {
+            val api = AddContentApi(context)
+            val decks = api.deckList ?: emptyMap()
+            val models = api.modelList ?: emptyMap()
+            Log.d(TAG, "getDecksAndModels: Got ${decks.size} decks, ${models.size} models")
+            decks to models
+        } catch (e: SecurityException) {
+            Log.e(TAG, "getDecksAndModels: Security exception - ${e.message}")
+            emptyMap<Long, String>() to emptyMap()
+        } catch (e: Exception) {
+            Log.e(TAG, "getDecksAndModels failed: ${e.message}", e)
+            emptyMap<Long, String>() to emptyMap()
         }
+    }
+
+    fun getDecks(): Map<Long, String> {
+        if (!isAnkiDroidInstalled()) return emptyMap()
 
         return try {
             val api = AddContentApi(context)
@@ -191,20 +181,8 @@ class AnkiDroidExporter(private val context: Context) {
         }
     }
 
-    /**
-     * Get available note types (models) from AnkiDroid.
-     * Returns map of model ID to model name.
-     */
     fun getModels(): Map<Long, String> {
-        if (!isAnkiDroidInstalled()) {
-            Log.d(TAG, "getModels: AnkiDroid not installed")
-            return emptyMap()
-        }
-
-        if (!hasPermission()) {
-            Log.d(TAG, "getModels: No permission")
-            return emptyMap()
-        }
+        if (!isAnkiDroidInstalled()) return emptyMap()
 
         return try {
             val api = AddContentApi(context)
@@ -220,17 +198,17 @@ class AnkiDroidExporter(private val context: Context) {
         }
     }
 
-    /**
-     * Get field names for a specific model.
-     */
     fun getModelFields(modelId: Long): List<String> {
         if (!isAnkiDroidInstalled()) return emptyList()
 
         return try {
             val api = AddContentApi(context)
             api.getFieldList(modelId)?.toList() ?: emptyList()
+        } catch (e: SecurityException) {
+            Log.e(TAG, "getModelFields: Security exception - ${e.message}")
+            emptyList()
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to get model fields: ${e.message}")
+            Log.e(TAG, "Failed to get model fields: ${e.message}", e)
             emptyList()
         }
     }

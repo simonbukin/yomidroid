@@ -53,7 +53,8 @@ fun TranslationToolScreen(
         onDispose { ttsManager.shutdown() }
     }
 
-    // Get latest OCR text
+    // Get latest OCR text and selected sentence
+    val latestSelectedSentence by OcrResultRepository.latestSelectedSentence.collectAsState()
     val latestOcrText by OcrResultRepository.latestOcrText.collectAsState()
 
     // Input and result state
@@ -85,19 +86,19 @@ fun TranslationToolScreen(
                 ?.key
         }
 
-        // Pre-fill with latest OCR or most recent sentence
-        if (latestOcrText.isNullOrBlank() && inputText.isBlank()) {
-            val mostRecent = savedSentences.firstOrNull()
-            if (mostRecent != null) {
-                inputText = mostRecent.sentence
-            }
+        // Pre-fill: prefer selected sentence > full OCR text > most recent history
+        if (inputText.isBlank()) {
+            inputText = latestSelectedSentence
+                ?: latestOcrText
+                ?: savedSentences.firstOrNull()?.sentence
+                ?: ""
         }
     }
 
-    // Pre-fill with OCR text
-    LaunchedEffect(latestOcrText) {
-        if (!latestOcrText.isNullOrBlank() && inputText.isBlank()) {
-            inputText = latestOcrText!!
+    // Pre-fill with selected sentence or OCR text when they change
+    LaunchedEffect(latestSelectedSentence, latestOcrText) {
+        if (inputText.isBlank()) {
+            inputText = latestSelectedSentence ?: latestOcrText ?: ""
         }
     }
 
@@ -123,7 +124,7 @@ fun TranslationToolScreen(
             try {
                 val result = translationService.translate(
                     text = inputText.trim(),
-                    modes = setOf(TranslationMode.NATURAL),
+                    modes = setOf(TranslationMode.NATURAL, TranslationMode.LITERAL),
                     includeInterlinear = false,
                     preferredBackend = selectedBackend
                 )
@@ -390,6 +391,31 @@ fun TranslationToolScreen(
                                 Text("Getting literal...")
                             } else {
                                 Text("Get Literal Translation")
+                            }
+                        }
+                    }
+                }
+
+                // Grammar & Nuance notes
+                result.notes?.let { notes ->
+                    item {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                text = "GRAMMAR & NUANCE",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.tertiary
+                            )
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.4f)
+                                )
+                            ) {
+                                Text(
+                                    text = notes,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    modifier = Modifier.padding(16.dp)
+                                )
                             }
                         }
                     }

@@ -1,5 +1,6 @@
 package com.yomidroid.ui
 
+import android.content.Intent
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -24,6 +25,9 @@ import com.yomidroid.anki.AnkiConfig
 import com.yomidroid.anki.AnkiConfigManager
 import com.yomidroid.anki.AnkiDroidExporter
 import com.yomidroid.anki.YomidroidField
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -35,11 +39,12 @@ fun AnkiSettingsScreen(
     val exporter = remember { AnkiDroidExporter(context) }
     val configManager = remember { AnkiConfigManager(context) }
 
-    var isAnkiInstalled by remember { mutableStateOf(exporter.isAnkiDroidInstalled()) }
-    var hasPermission by remember { mutableStateOf(exporter.hasPermission()) }
+    var isAnkiInstalled by remember { mutableStateOf(false) }
+    var hasPermission by remember { mutableStateOf(false) }
     var decks by remember { mutableStateOf<Map<Long, String>>(emptyMap()) }
     var models by remember { mutableStateOf<Map<Long, String>>(emptyMap()) }
     var modelFields by remember { mutableStateOf<List<String>>(emptyList()) }
+    var loadError by remember { mutableStateOf<String?>(null) }
 
     var selectedDeckId by remember { mutableLongStateOf(-1L) }
     var selectedDeckName by remember { mutableStateOf("") }
@@ -53,41 +58,63 @@ fun AnkiSettingsScreen(
     var modelDropdownExpanded by remember { mutableStateOf(false) }
     var duplicateFieldDropdownExpanded by remember { mutableStateOf(false) }
 
+    val coroutineScope = rememberCoroutineScope()
+
     // Permission request launcher
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
-        hasPermission = granted || exporter.hasPermission()
-        if (hasPermission) {
-            // Reload data after permission granted
-            decks = exporter.getDecks()
-            models = exporter.getModels()
+        coroutineScope.launch {
+            val perm = withContext(Dispatchers.IO) {
+                granted || exporter.hasPermission()
+            }
+            hasPermission = perm
+            if (perm) {
+                val (loadedDecks, loadedModels) = withContext(Dispatchers.IO) { exporter.getDecksAndModels() }
+                decks = loadedDecks
+                models = loadedModels
+            }
         }
     }
 
-    // Function to load data
-    fun loadData() {
+    // Suspend function to load data off the main thread
+    suspend fun loadData() {
         isLoading = true
-        isAnkiInstalled = exporter.isAnkiDroidInstalled()
-        hasPermission = exporter.hasPermission()
+        loadError = null
+        try {
+            val installed = withContext(Dispatchers.IO) { exporter.isAnkiDroidInstalled() }
+            isAnkiInstalled = installed
 
-        if (isAnkiInstalled && hasPermission) {
-            decks = exporter.getDecks()
-            models = exporter.getModels()
+            val perm = if (installed) {
+                withContext(Dispatchers.IO) { exporter.hasPermission() }
+            } else false
+            hasPermission = perm
 
-            // Load saved config
-            val config = configManager.getConfig()
-            if (config.deckId > 0) {
-                selectedDeckId = config.deckId
-                selectedDeckName = config.deckName
+            if (installed && perm) {
+                val (loadedDecks, loadedModels) = withContext(Dispatchers.IO) { exporter.getDecksAndModels() }
+                decks = loadedDecks
+                models = loadedModels
+
+                if (loadedDecks.isEmpty() && loadedModels.isEmpty()) {
+                    loadError = "Could not read AnkiDroid data. Make sure AnkiDroid has been opened at least once, then tap Refresh."
+                } else {
+                    // Load saved config
+                    val config = configManager.getConfig()
+                    if (config.deckId > 0) {
+                        selectedDeckId = config.deckId
+                        selectedDeckName = config.deckName
+                    }
+                    if (config.modelId > 0) {
+                        selectedModelId = config.modelId
+                        selectedModelName = config.modelName
+                        modelFields = withContext(Dispatchers.IO) { exporter.getModelFields(config.modelId) }
+                    }
+                    fieldMappings = config.fieldMappings
+                    duplicateCheckField = config.duplicateCheckField
+                }
             }
-            if (config.modelId > 0) {
-                selectedModelId = config.modelId
-                selectedModelName = config.modelName
-                modelFields = exporter.getModelFields(config.modelId)
-            }
-            fieldMappings = config.fieldMappings
-            duplicateCheckField = config.duplicateCheckField
+        } catch (e: Exception) {
+            loadError = e.message ?: "Failed to load AnkiDroid data"
         }
         isLoading = false
     }
@@ -96,7 +123,7 @@ fun AnkiSettingsScreen(
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                loadData()
+                coroutineScope.launch { loadData() }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -105,15 +132,10 @@ fun AnkiSettingsScreen(
         }
     }
 
-    // Load initial state
-    LaunchedEffect(Unit) {
-        loadData()
-    }
-
     // Update fields when model changes
     LaunchedEffect(selectedModelId) {
         if (selectedModelId > 0) {
-            modelFields = exporter.getModelFields(selectedModelId)
+            modelFields = withContext(Dispatchers.IO) { exporter.getModelFields(selectedModelId) }
         }
     }
 
@@ -128,7 +150,7 @@ fun AnkiSettingsScreen(
                 },
                 actions = {
                     // Refresh button
-                    IconButton(onClick = { loadData() }) {
+                    IconButton(onClick = { coroutineScope.launch { loadData() } }) {
                         Icon(Icons.Default.Refresh, contentDescription = "Refresh")
                     }
                     // Save button
@@ -162,6 +184,37 @@ fun AnkiSettingsScreen(
                 contentAlignment = Alignment.Center
             ) {
                 CircularProgressIndicator()
+            }
+        } else if (loadError != null) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Icon(
+                    Icons.Default.Warning,
+                    contentDescription = null,
+                    modifier = Modifier.size(64.dp),
+                    tint = MaterialTheme.colorScheme.error
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = "Failed to Connect",
+                    style = MaterialTheme.typography.headlineSmall
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = loadError ?: "Unknown error",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(24.dp))
+                Button(onClick = { coroutineScope.launch { loadData() } }) {
+                    Text("Retry")
+                }
             }
         } else if (!isAnkiInstalled) {
             // AnkiDroid not installed
@@ -217,18 +270,28 @@ fun AnkiSettingsScreen(
                 )
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
-                    text = "Enable AnkiDroid API",
+                    text = "Grant AnkiDroid Permission",
                     style = MaterialTheme.typography.headlineSmall
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "Yomidroid needs API access in AnkiDroid to read your decks and add cards.",
+                    text = "Yomidroid needs permission to access AnkiDroid's database to read your decks and add cards.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(modifier = Modifier.height(24.dp))
 
-                // Step-by-step instructions
+                // Step 1: Request permission
+                Button(
+                    onClick = {
+                        permissionLauncher.launch("com.ichi2.anki.permission.READ_WRITE_DATABASE")
+                    }
+                ) {
+                    Text("Grant Permission")
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Troubleshooting instructions
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(
@@ -237,51 +300,54 @@ fun AnkiSettingsScreen(
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Text(
-                            text = "Setup Instructions:",
+                            text = "Troubleshooting:",
                             style = MaterialTheme.typography.titleSmall
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "1. Open AnkiDroid\n" +
-                                   "2. Tap ⋮ menu → Settings\n" +
-                                   "3. Tap Advanced\n" +
-                                   "4. Tap AnkiDroid API\n" +
-                                   "5. Find \"Yomidroid\" and enable it\n" +
-                                   "6. Return here and tap Refresh",
+                            text = "1. Make sure AnkiDroid has been opened at least once\n" +
+                                   "2. Tap \"Grant Permission\" above\n" +
+                                   "3. If no dialog appears, go to:\n" +
+                                   "   Android Settings → Apps → Yomidroid → Permissions\n" +
+                                   "4. After granting, tap Refresh (top right)",
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
                 }
 
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(16.dp))
 
-                Button(
-                    onClick = {
-                        // Try to open AnkiDroid directly
-                        try {
-                            val launchIntent = context.packageManager.getLaunchIntentForPackage("com.ichi2.anki")
-                            if (launchIntent != null) {
-                                context.startActivity(launchIntent)
-                            }
-                        } catch (e: Exception) {
-                            // Fallback to permission request
-                            permissionLauncher.launch("com.ichi2.anki.permission.READ_WRITE_DATABASE")
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedButton(
+                        onClick = {
+                            // Open Yomidroid's app settings where user can manage permissions
+                            try {
+                                val intent = Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                    data = android.net.Uri.parse("package:${context.packageName}")
+                                }
+                                context.startActivity(intent)
+                            } catch (_: Exception) {}
                         }
+                    ) {
+                        Text("App Settings")
                     }
-                ) {
-                    Text("Open AnkiDroid")
-                }
-                Spacer(modifier = Modifier.height(12.dp))
-                OutlinedButton(
-                    onClick = {
-                        permissionLauncher.launch("com.ichi2.anki.permission.READ_WRITE_DATABASE")
+                    OutlinedButton(
+                        onClick = {
+                            try {
+                                val launchIntent = context.packageManager.getLaunchIntentForPackage("com.ichi2.anki")
+                                if (launchIntent != null) {
+                                    context.startActivity(launchIntent)
+                                }
+                            } catch (_: Exception) {}
+                        }
+                    ) {
+                        Text("Open AnkiDroid")
                     }
-                ) {
-                    Text("Request Permission")
                 }
+
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
-                    text = "After enabling API access in AnkiDroid, return here and tap the refresh button in the top right.",
+                    text = "After granting permission, return here and tap the refresh button.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

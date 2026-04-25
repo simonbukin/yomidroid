@@ -16,6 +16,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.yomidroid.translation.BackendStatus
 import com.yomidroid.translation.TranslationService
@@ -38,6 +40,8 @@ fun TranslationSettingsScreen(
     var remoteEnabled by remember { mutableStateOf(remoteBackend?.enabled ?: false) }
     var remoteEndpoint by remember { mutableStateOf(remoteBackend?.endpoint ?: "") }
     var remoteModel by remember { mutableStateOf(remoteBackend?.modelName ?: "") }
+    var remoteApiKey by remember { mutableStateOf(remoteBackend?.apiKey ?: "") }
+    var showApiKey by remember { mutableStateOf(false) }
     var remoteStatus by remember { mutableStateOf<BackendStatus?>(null) }
     var isTesting by remember { mutableStateOf(false) }
 
@@ -112,7 +116,7 @@ fun TranslationSettingsScreen(
                                 style = MaterialTheme.typography.bodyLarge
                             )
                             Text(
-                                text = "Use Ollama, llama.cpp, or LM Studio",
+                                text = "Gemini Flash, Ollama, llama.cpp, or LM Studio",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -155,6 +159,64 @@ fun TranslationSettingsScreen(
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth()
                         )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        OutlinedTextField(
+                            value = remoteApiKey,
+                            onValueChange = { value ->
+                                remoteApiKey = value
+                                remoteBackend?.apiKey = value
+                            },
+                            label = { Text("API Key (optional)") },
+                            placeholder = { Text("For Gemini, OpenAI, etc.") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            visualTransformation = if (showApiKey) VisualTransformation.None else PasswordVisualTransformation(),
+                            trailingIcon = {
+                                TextButton(onClick = { showApiKey = !showApiKey }) {
+                                    Text(if (showApiKey) "Hide" else "Show", style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Preset buttons
+                        Text(
+                            text = "Quick Presets",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    remoteEndpoint = "https://generativelanguage.googleapis.com/v1beta/openai"
+                                    remoteModel = "gemini-2.5-flash"
+                                    remoteBackend?.endpoint = remoteEndpoint
+                                    remoteBackend?.modelName = remoteModel
+                                },
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                            ) {
+                                Text("Gemini Flash", style = MaterialTheme.typography.labelSmall)
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    remoteEndpoint = "http://localhost:11434/v1"
+                                    remoteModel = "vntl-llama3-8b-v2"
+                                    remoteApiKey = ""
+                                    remoteBackend?.endpoint = remoteEndpoint
+                                    remoteBackend?.modelName = remoteModel
+                                    remoteBackend?.apiKey = ""
+                                },
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                            ) {
+                                Text("Ollama", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
 
                         Spacer(modifier = Modifier.height(12.dp))
 
@@ -249,19 +311,32 @@ fun TranslationSettingsScreen(
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Text(
-                            text = "Recommended Models",
+                            text = "Recommended Setup",
                             style = MaterialTheme.typography.titleSmall
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "vntl-llama3-8b-v2 - Best balance (259k downloads)",
+                            text = "Gemini Flash - 1,500 req/day free, great Japanese quality",
                             style = MaterialTheme.typography.bodySmall
                         )
                         Text(
-                            text = "vntl-gemma2-27b - Highest quality (70.6%)",
-                            style = MaterialTheme.typography.bodySmall
+                            text = "Get API key from: ai.google.dev",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
                         )
                         Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Local Models (Ollama)",
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                        Text(
+                            text = "vntl-llama3-8b-v2 - Best balance",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Text(
+                            text = "vntl-gemma2-27b - Highest quality",
+                            style = MaterialTheme.typography.bodySmall
+                        )
                         Text(
                             text = "Get models from: huggingface.co/lmg-anon",
                             style = MaterialTheme.typography.bodySmall,

@@ -485,6 +485,7 @@ class YomidroidAccessibilityService : AccessibilityService() {
                             if (bitmap != null) {
                                 // Convert to software bitmap for ML Kit
                                 val softwareBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, false)
+                                bitmap.recycle()  // Recycle the hardware-backed bitmap
                                 Log.d(TAG, "Screenshot: ${softwareBitmap.width}x${softwareBitmap.height}, " +
                                     "Screen: ${screenWidth}x${screenHeight}, " +
                                     "Scale: ${screenWidth.toFloat()/softwareBitmap.width}x${screenHeight.toFloat()/softwareBitmap.height}")
@@ -638,6 +639,9 @@ class YomidroidAccessibilityService : AccessibilityService() {
     }
 
     private fun storeScreenshot(fullBitmap: Bitmap) {
+        // Recycle previous screenshot to prevent memory leak
+        currentScreenshot?.recycle()
+
         val maxDim = 1080f
         val scale = maxDim / maxOf(fullBitmap.width, fullBitmap.height)
         currentScreenshot = if (scale < 1f) {
@@ -796,6 +800,7 @@ class YomidroidAccessibilityService : AccessibilityService() {
         overlayView = null
         currentOcrResults = emptyList()
         unifiedContext = null
+        currentScreenshot?.recycle()
         currentScreenshot = null
         originalScreenshotWidth = 0
         originalScreenshotHeight = 0
@@ -938,6 +943,9 @@ class YomidroidAccessibilityService : AccessibilityService() {
             // Search from this position in the unified text (all screen text)
             val searchText = context.unifiedText.substring(unifiedIndex)
             val entries = dictionaryEngineRef.get()?.findTerms(searchText) ?: emptyList()
+
+            // Store the tapped line for translation pre-fill
+            OcrResultRepository.updateSelectedSentence(ocrResult.text)
 
             withContext(Dispatchers.Main) {
                 if (entries.isNotEmpty()) {
