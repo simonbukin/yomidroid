@@ -20,7 +20,26 @@ Japanese OCR dictionary overlay for Android. Capture any screen, recognize Japan
 - AnkiDroid export for flashcard creation
 - Lookup history with screenshots
 
-## Setup
+## Install
+
+1. Go to the **[latest release](https://github.com/simonbukin/yomidroid/releases/latest)** and download the `yomidroid-*.apk` attached to it.
+2. Install it on your device:
+   - **Via adb:** `adb install -r yomidroid-*.apk`
+   - **On-device:** transfer the APK to your phone, tap it in your file manager, and accept the *"Install unknown apps"* prompt for that app.
+
+Releases are debug-signed and sideload-only — they can't upgrade a Play Store install.
+
+## First-Time Setup
+
+1. **Grant overlay permission** when prompted (*Display over other apps*).
+2. **Enable the accessibility service** at *Settings → Accessibility → Yomidroid*. The floating button appears once this is on.
+3. **Import dictionaries.** The app ships without any built-in dictionary. Open *Settings → Dictionaries* and either:
+   - Tap **Import Yomitan Dictionaries** to pick Yomitan-format `.zip` files you already have, or
+   - Choose from the **Recommended** list to download common dictionaries directly — Jitendex (general), JMnedict (names/places), KANJIDIC, pitch accents, and frequency data.
+
+Once at least one dictionary is loaded, lookups work end-to-end.
+
+## Build from Source
 
 ### Prerequisites
 
@@ -71,13 +90,10 @@ Or open in Android Studio and click Run.
 
 ## Usage
 
-1. Launch Yomidroid and grant overlay permission
-2. Enable Accessibility Service in Settings > Accessibility > Yomidroid
-3. A floating button appears on screen
-4. Navigate to your game or visual novel
-5. Tap the floating button to capture and scan
-6. Tap highlighted text to look up words
-7. Tap outside to dismiss the overlay
+1. Open the app you want to read (game, visual novel, manga reader, etc.).
+2. Tap the floating button to capture and scan.
+3. Tap highlighted text to look up words.
+4. Tap outside the popup to dismiss the overlay.
 
 ### Tools
 
