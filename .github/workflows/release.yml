@@ -3,6 +3,8 @@ name: Build & Release APK
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -38,6 +40,7 @@ jobs:
         run: ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: Compute release metadata
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         id: meta
         run: |
           SHORT_SHA="${GITHUB_SHA::7}"
@@ -51,6 +54,7 @@ jobs:
           cp app/build/outputs/apk/debug/app-debug.apk "dist/${APK}"
 
       - name: Create GitHub Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.meta.outputs.tag }}
