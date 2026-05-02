@@ -56,11 +56,7 @@ fun SearchScreen() {
     val context = LocalContext.current
     val dictionaryEngine = remember { DictionaryEngine(context) }
     val grammarLibrary = remember { GrammarLibrary.getInstance(context) }
-    val ttsManager = remember { TtsManager(context) }
-
-    DisposableEffect(Unit) {
-        onDispose { ttsManager.shutdown() }
-    }
+    val ttsManager = remember { TtsManager.getInstance(context) }
 
     var query by remember { mutableStateOf("") }
     var dictResults by remember { mutableStateOf<List<DictionaryEntry>>(emptyList()) }
@@ -207,7 +203,7 @@ private fun DictResultCard(entry: DictionaryEntry, ttsManager: TtsManager) {
                     }
                 }
                 IconButton(
-                    onClick = { ttsManager.speak(entry.reading.ifBlank { entry.expression }) },
+                    onClick = { ttsManager.speak(entry.reading.ifBlank { entry.expression }, showErrorToast = true) },
                     modifier = Modifier.size(28.dp)
                 ) {
                     Icon(

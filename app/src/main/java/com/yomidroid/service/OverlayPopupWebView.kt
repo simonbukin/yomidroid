@@ -38,7 +38,7 @@ class OverlayPopupWebView(private val context: Context) {
     private var currentEntries: List<DictionaryEntry> = emptyList()
     private var onAnkiExport: ((DictionaryEntry, Int) -> Unit)? = null
     private val handler = Handler(Looper.getMainLooper())
-    private var ttsManager: TtsManager? = null
+    private val ttsManager: TtsManager by lazy { TtsManager.getInstance(context) }
     private var isPageLoaded = false
 
     // Pending data to inject once the page loads
@@ -200,8 +200,6 @@ class OverlayPopupWebView(private val context: Context) {
     }
 
     fun destroy() {
-        ttsManager?.shutdown()
-        ttsManager = null
         webView?.let { wv ->
             (wv.parent as? FrameLayout)?.removeView(wv)
             wv.destroy()
@@ -295,10 +293,6 @@ class OverlayPopupWebView(private val context: Context) {
         wv.layoutParams = lp
     }
 
-    private fun getOrCreateTts(): TtsManager {
-        return ttsManager ?: TtsManager(context).also { ttsManager = it }
-    }
-
     inner class PopupJsInterface {
         @JavascriptInterface
         fun ankiExport(index: Int) {
@@ -318,7 +312,7 @@ class OverlayPopupWebView(private val context: Context) {
         @JavascriptInterface
         fun speak(text: String) {
             handler.post {
-                getOrCreateTts().speak(text)
+                ttsManager.speak(text)
             }
         }
     }

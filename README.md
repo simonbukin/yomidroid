@@ -64,35 +64,6 @@ Once at least one dictionary is loaded, lookups work end-to-end.
 - Android Studio Hedgehog (2023.1.1) or newer
 - JDK 17
 - Android SDK 34
-- Python 3 (for dictionary conversion)
-
-### Dictionary Setup (first-time only)
-
-The app bundles a multi-dictionary database with Jitendex (general terms) and JMnedict (names/places).
-
-```bash
-cd tools/data
-
-# Download Jitendex (Yomitan format)
-curl -L -o jitendex.zip "https://github.com/stephenmk/stephenmk.github.io/releases/latest/download/jitendex-yomitan.zip"
-
-# Download JMnedict (names/places)
-curl -L -o JMnedict.xml.gz "http://ftp.edrdg.org/pub/Nihongo/JMnedict.xml.gz"
-gunzip JMnedict.xml.gz
-
-# Download Innocent Corpus frequency (5000+ VNs)
-curl -L -o innocent_corpus.zip "https://github.com/FooSoft/yomichan/raw/dictionaries/innocent_corpus.zip"
-
-# Convert to unified SQLite database
-cd ..
-python3 convert_dictionaries.py \
-    --jitendex data/jitendex.zip \
-    --jmnedict data/JMnedict.xml \
-    --frequency data/innocent_corpus.zip \
-    --output ../app/src/main/assets/dictionary.db
-```
-
-Result: ~1M entries (292K Jitendex + 748K JMnedict) with 149K frequency rankings. APK size: ~178MB.
 
 ### Build & Install
 
@@ -119,10 +90,16 @@ To look up something you remember from earlier without re-OCRing (or perhaps the
 
 ## Attribution
 
-### Dictionary Data
-- [Jitendex](https://github.com/stephenmk/stephenmk.github.io) - Primary dictionary (~292K entries)
-- [JMnedict](https://www.edrdg.org/enamdict/enamdict_doc.html) - Names and places (~748K entries, CC BY-SA)
+### Recommended Dictionaries
+
+The app ships without bundled dictionaries. The in-app *Recommended* importer pulls from:
+
+- [Jitendex](https://github.com/stephenmk/stephenmk.github.io) - General-purpose Japanese-English dictionary
+- [JMnedict](https://www.edrdg.org/enamdict/enamdict_doc.html) - Names and places (CC BY-SA)
 - [Innocent Corpus](https://github.com/FooSoft/yomichan) - Frequency rankings from 5000+ visual novels
+- KANJIDIC and pitch-accent data from the standard Yomitan ecosystem
+
+Any Yomitan-format `.zip` works via the manual import flow.
 
 ### Grammar Data
 - [GameGengo](https://www.youtube.com/@GameGengo) - JLPT grammar video timestamps

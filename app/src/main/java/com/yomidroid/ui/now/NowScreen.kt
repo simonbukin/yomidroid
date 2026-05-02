@@ -214,9 +214,7 @@ private fun ParseTab(
     val analyzer = remember { GrammarAnalyzer.getInstance() }
     val dictionaryEngine = remember { DictionaryEngine(context) }
     val grammarResolver = remember { GrammarResolver.getInstance(context) }
-    val ttsManager = remember { TtsManager(context) }
-
-    DisposableEffect(Unit) { onDispose { ttsManager.shutdown() } }
+    val ttsManager = remember { TtsManager.getInstance(context) }
 
     var analysisResult by remember { mutableStateOf<GrammarAnalysisResult?>(null) }
     var resolvedGrammar by remember { mutableStateOf<List<ResolvedGrammarPoint>>(emptyList()) }
@@ -252,7 +250,7 @@ private fun ParseTab(
                 maxLines = 4,
                 trailingIcon = {
                     if (sentence.isNotBlank()) {
-                        IconButton(onClick = { ttsManager.speak(sentence) }) {
+                        IconButton(onClick = { ttsManager.speak(sentence, showErrorToast = true) }) {
                             Icon(
                                 Icons.AutoMirrored.Filled.VolumeUp,
                                 contentDescription = "Read aloud",
@@ -357,9 +355,7 @@ private fun TranslateTab(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val translationService = remember { TranslationService.getInstance(context) }
-    val ttsManager = remember { TtsManager(context) }
-
-    DisposableEffect(Unit) { onDispose { ttsManager.shutdown() } }
+    val ttsManager = remember { TtsManager.getInstance(context) }
 
     var result by remember { mutableStateOf<TranslationResult?>(null) }
     var isTranslating by remember { mutableStateOf(false) }
@@ -418,7 +414,7 @@ private fun TranslateTab(
                 maxLines = 4,
                 trailingIcon = {
                     if (sentence.isNotBlank()) {
-                        IconButton(onClick = { ttsManager.speak(sentence) }) {
+                        IconButton(onClick = { ttsManager.speak(sentence, showErrorToast = true) }) {
                             Icon(
                                 Icons.AutoMirrored.Filled.VolumeUp,
                                 contentDescription = "Read aloud",
@@ -878,6 +874,8 @@ private fun DojgSection(
 
 @Composable
 private fun DictionaryMatchCard(match: DictionaryEntryWithPosition) {
+    val context = LocalContext.current
+    val ttsManager = remember { TtsManager.getInstance(context) }
     var expanded by remember { mutableStateOf(false) }
     val entry = match.entry
     Card(
@@ -907,11 +905,29 @@ private fun DictionaryMatchCard(match: DictionaryEntryWithPosition) {
                         )
                     }
                 }
-                Icon(
-                    imageVector = if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                    contentDescription = if (expanded) "Collapse" else "Expand",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(
+                        onClick = {
+                            ttsManager.speak(
+                                entry.reading.ifBlank { entry.expression },
+                                showErrorToast = true
+                            )
+                        },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.VolumeUp,
+                            contentDescription = "Read aloud",
+                            modifier = Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Icon(
+                        imageVector = if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                        contentDescription = if (expanded) "Collapse" else "Expand",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
             Text(
                 text = entry.glossary.firstOrNull() ?: "",
