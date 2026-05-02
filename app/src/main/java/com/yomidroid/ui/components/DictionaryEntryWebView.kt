@@ -1,6 +1,7 @@
 package com.yomidroid.ui.components
 
 import android.annotation.SuppressLint
+import android.content.Context
 import android.graphics.Color
 import android.os.Handler
 import android.os.Looper
@@ -16,6 +17,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.yomidroid.dictionary.DictionaryEntry
 import com.yomidroid.dictionary.EntrySerializer
+import com.yomidroid.tts.TtsManager
 
 /**
  * Controller for [DictionaryEntryWebView]. Lets the caller push the result of an
@@ -86,7 +88,7 @@ fun DictionaryEntryWebView(
                 settings.allowFileAccessFromFileURLs = true
 
                 addJavascriptInterface(
-                    DictionaryWebViewBridge(controller),
+                    DictionaryWebViewBridge(controller, ctx.applicationContext),
                     "YomidroidPopup"
                 )
 
@@ -123,9 +125,11 @@ fun DictionaryEntryWebView(
 }
 
 private class DictionaryWebViewBridge(
-    private val controller: DictionaryWebViewController
+    private val controller: DictionaryWebViewController,
+    appContext: Context
 ) {
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val tts = TtsManager.getInstance(appContext)
 
     @JavascriptInterface
     fun ankiExport(index: Int) {
@@ -142,6 +146,6 @@ private class DictionaryWebViewBridge(
 
     @JavascriptInterface
     fun speak(text: String) {
-        // No-op: TTS only wired in the overlay variant.
+        mainHandler.post { tts.speak(text) }
     }
 }

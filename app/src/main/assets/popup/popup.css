@@ -153,8 +153,9 @@ body {
     margin-left: -0.05em;
 }
 
-/* Anki button pushed to right */
-.anki-btn {
+/* Right-aligned action cluster: speak absorbs the free space,
+   anki follows immediately to its right via the parent's flex gap. */
+.speak-btn {
     margin-left: auto;
 }
 

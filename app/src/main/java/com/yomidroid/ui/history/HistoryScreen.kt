@@ -17,6 +17,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Delete
@@ -42,6 +43,7 @@ import com.yomidroid.anki.ExportResult
 import com.yomidroid.data.AppDatabase
 import com.yomidroid.data.LookupHistoryEntity
 import com.yomidroid.dictionary.DictionaryEntry
+import com.yomidroid.tts.TtsManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -420,6 +422,7 @@ private fun HistoryItem(
     onExportToAnki: (LookupHistoryEntity, (AnkiButtonState) -> Unit) -> Unit
 ) {
     val context = LocalContext.current
+    val ttsManager = remember { TtsManager.getInstance(context) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var ankiButtonState by remember { mutableStateOf(AnkiButtonState.IDLE) }
 
@@ -493,6 +496,18 @@ private fun HistoryItem(
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    // Read-aloud button
+                    IconButton(
+                        onClick = { ttsManager.speak(item.reading.ifBlank { item.word }, showErrorToast = true) },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.VolumeUp,
+                            contentDescription = "Read aloud",
+                            modifier = Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     // Anki export button
                     IconButton(
                         onClick = {

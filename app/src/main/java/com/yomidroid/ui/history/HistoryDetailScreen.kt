@@ -13,6 +13,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
@@ -35,6 +36,7 @@ import com.yomidroid.data.AppDatabase
 import com.yomidroid.data.LookupHistoryEntity
 import com.yomidroid.dictionary.DictionaryEngine
 import com.yomidroid.dictionary.DictionaryEntry
+import com.yomidroid.tts.TtsManager
 import com.yomidroid.ui.components.DictionaryEntryWebView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -66,6 +68,7 @@ fun HistoryDetailScreen(
 
     val ankiExporter = remember { AnkiDroidExporter(context) }
     val dictionaryEngine = remember { DictionaryEngine(context) }
+    val ttsManager = remember { TtsManager.getInstance(context) }
 
     // Load entry + re-lookup from dictionary for rich rendering
     LaunchedEffect(historyId) {
@@ -278,16 +281,29 @@ fun HistoryDetailScreen(
                                                 style = MaterialTheme.typography.labelMedium,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
-                                            IconButton(
-                                                onClick = { copyToClipboard(context, "sentence", sentence) },
-                                                modifier = Modifier.size(32.dp)
-                                            ) {
-                                                Icon(
-                                                    Icons.Default.ContentCopy,
-                                                    contentDescription = "Copy sentence",
-                                                    modifier = Modifier.size(18.dp),
-                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                                )
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                IconButton(
+                                                    onClick = { ttsManager.speak(sentence, showErrorToast = true) },
+                                                    modifier = Modifier.size(32.dp)
+                                                ) {
+                                                    Icon(
+                                                        Icons.AutoMirrored.Filled.VolumeUp,
+                                                        contentDescription = "Read sentence aloud",
+                                                        modifier = Modifier.size(18.dp),
+                                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                                IconButton(
+                                                    onClick = { copyToClipboard(context, "sentence", sentence) },
+                                                    modifier = Modifier.size(32.dp)
+                                                ) {
+                                                    Icon(
+                                                        Icons.Default.ContentCopy,
+                                                        contentDescription = "Copy sentence",
+                                                        modifier = Modifier.size(18.dp),
+                                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
                                             }
                                         }
                                         Spacer(modifier = Modifier.height(8.dp))
@@ -327,16 +343,34 @@ fun HistoryDetailScreen(
                                             style = MaterialTheme.typography.headlineMedium,
                                             color = MaterialTheme.colorScheme.onPrimaryContainer
                                         )
-                                        IconButton(
-                                            onClick = { copyToClipboard(context, "word", item.word) },
-                                            modifier = Modifier.size(32.dp)
-                                        ) {
-                                            Icon(
-                                                Icons.Default.ContentCopy,
-                                                contentDescription = "Copy word",
-                                                modifier = Modifier.size(18.dp),
-                                                tint = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
-                                            )
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            IconButton(
+                                                onClick = {
+                                                    ttsManager.speak(
+                                                        item.reading.ifBlank { item.word },
+                                                        showErrorToast = true
+                                                    )
+                                                },
+                                                modifier = Modifier.size(32.dp)
+                                            ) {
+                                                Icon(
+                                                    Icons.AutoMirrored.Filled.VolumeUp,
+                                                    contentDescription = "Read word aloud",
+                                                    modifier = Modifier.size(18.dp),
+                                                    tint = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                                                )
+                                            }
+                                            IconButton(
+                                                onClick = { copyToClipboard(context, "word", item.word) },
+                                                modifier = Modifier.size(32.dp)
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.ContentCopy,
+                                                    contentDescription = "Copy word",
+                                                    modifier = Modifier.size(18.dp),
+                                                    tint = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                                                )
+                                            }
                                         }
                                     }
                                     if (item.reading.isNotEmpty() && item.reading != item.word) {

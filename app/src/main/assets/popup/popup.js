@@ -251,7 +251,9 @@ function createGroupedEntry(group, groupIndex) {
         }
     }
 
-    // Anki button (rightmost)
+    // Speak + Anki buttons (rightmost cluster)
+    var speakText = first.reading || first.expression;
+    if (speakText) topRow.appendChild(createSpeakButton(speakText));
     topRow.appendChild(createAnkiButton(group[0].originalIndex));
 
     el.appendChild(topRow);
@@ -338,6 +340,29 @@ var ANKI_LOGO_SVG = '<svg width="20" height="20" viewBox="0 0 24 24" xmlns="http
     '</svg>';
 var CHECK_SVG = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 12 10 17 19 7"/></svg>';
 var SPINNER_SVG = '<svg width="18" height="18" viewBox="0 0 50 50" class="anki-spinner"><circle cx="25" cy="25" r="20" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-dasharray="80 200"/></svg>';
+
+// ============================================================
+//  Speak button — system TTS via YomidroidPopup.speak
+// ============================================================
+
+var SPEAKER_SVG = '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">' +
+    '<path d="M3 10v4a1 1 0 0 0 1 1h3l4 4a1 1 0 0 0 1.7-.7V5.7A1 1 0 0 0 11 5l-4 4H4a1 1 0 0 0-1 1z"/>' +
+    '<path d="M16.5 12a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z"/>' +
+    '<path d="M14 3.2v2.06a7 7 0 0 1 0 13.48v2.06a9 9 0 0 0 0-17.6z"/>' +
+    '</svg>';
+
+function createSpeakButton(text) {
+    var btn = createElement('button', 'action-btn speak-btn');
+    btn.title = 'Read aloud';
+    btn.innerHTML = SPEAKER_SVG;
+    btn.onclick = function(e) {
+        e.stopPropagation();
+        if (window.YomidroidPopup && typeof window.YomidroidPopup.speak === 'function') {
+            window.YomidroidPopup.speak(text);
+        }
+    };
+    return btn;
+}
 
 function createAnkiButton(index) {
     var btn = createElement('button', 'action-btn anki-btn');

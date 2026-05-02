@@ -10,9 +10,14 @@
     <!-- For AnkiDroid integration (future) -->
     <uses-permission android:name="com.ichi2.anki.permission.READ_WRITE_DATABASE" />
 
-    <!-- Query AnkiDroid (Android 11+) -->
+    <!-- Package visibility (Android 11+) -->
     <queries>
+        <!-- AnkiDroid -->
         <package android:name="com.ichi2.anki" />
+        <!-- TTS engines (system + user-installed, e.g. VOICEVOX) -->
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
     </queries>
 
     <application
