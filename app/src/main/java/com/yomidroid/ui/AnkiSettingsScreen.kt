@@ -52,6 +52,7 @@ fun AnkiSettingsScreen(
     var selectedModelName by remember { mutableStateOf("") }
     var fieldMappings by remember { mutableStateOf<Map<YomidroidField, String>>(emptyMap()) }
     var duplicateCheckField by remember { mutableStateOf(YomidroidField.EXPRESSION) }
+    var allowDuplicates by remember { mutableStateOf(false) }
 
     var isLoading by remember { mutableStateOf(true) }
     var deckDropdownExpanded by remember { mutableStateOf(false) }
@@ -111,6 +112,7 @@ fun AnkiSettingsScreen(
                     }
                     fieldMappings = config.fieldMappings
                     duplicateCheckField = config.duplicateCheckField
+                    allowDuplicates = config.allowDuplicates
                 }
             }
         } catch (e: Exception) {
@@ -162,7 +164,8 @@ fun AnkiSettingsScreen(
                                 modelId = selectedModelId,
                                 modelName = selectedModelName,
                                 fieldMappings = fieldMappings,
-                                duplicateCheckField = duplicateCheckField
+                                duplicateCheckField = duplicateCheckField,
+                                allowDuplicates = allowDuplicates
                             )
                             configManager.saveConfig(config)
                             Toast.makeText(context, "Settings saved", Toast.LENGTH_SHORT).show()
@@ -540,6 +543,31 @@ fun AnkiSettingsScreen(
                                 )
                             }
                         }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Allow duplicate cards",
+                                style = MaterialTheme.typography.titleSmall
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "Add a fresh card even if the word already exists in your collection (good for capturing immersion context).",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Switch(
+                            checked = allowDuplicates,
+                            onCheckedChange = { allowDuplicates = it }
+                        )
                     }
                 }
 

@@ -21,6 +21,7 @@ import android.view.VelocityTracker
 import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityWindowInfo
 import android.widget.Toast
 import kotlin.math.abs
 import kotlin.math.sqrt
@@ -308,25 +309,65 @@ class YomidroidAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
 
-        // Track foreground app for history context tagging
-        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            val pkg = event.packageName?.toString() ?: return
-            // Filter out our own package
-            if (pkg == packageName) return
-
-            currentForegroundPackage = pkg
-            currentWindowTitle = event.text.firstOrNull()?.toString()
-
-            // Resolve human-readable app label
-            currentForegroundAppLabel = try {
-                val appInfo = packageManager.getApplicationInfo(pkg, 0)
-                packageManager.getApplicationLabel(appInfo).toString()
-            } catch (e: Exception) {
-                null
-            }
-
-            Log.d(TAG, "Foreground app: $currentForegroundAppLabel ($currentForegroundPackage), window: $currentWindowTitle")
+        // Refresh foreground-app attribution by enumerating windows across all displays
+        // (covers dual-screen devices like the AYN Thor where the game lives on a
+        // different display than Yomidroid's overlay/UI).
+        when (event.eventType) {
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
+            AccessibilityEvent.TYPE_WINDOWS_CHANGED -> refreshForegroundApp()
         }
+    }
+
+    /**
+     * Pick the topmost (highest layer) TYPE_APPLICATION window across every connected
+     * display whose package isn't ours, and remember its package/label/title for
+     * later history tagging.
+     */
+    private fun refreshForegroundApp() {
+        val windowList: List<AccessibilityWindowInfo> = try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val sparse = windowsOnAllDisplays
+                val merged = ArrayList<AccessibilityWindowInfo>()
+                for (i in 0 until sparse.size()) {
+                    sparse.valueAt(i)?.let { merged.addAll(it) }
+                }
+                merged
+            } else {
+                @Suppress("DEPRECATION")
+                windows ?: emptyList()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to enumerate accessibility windows: ${e.message}")
+            return
+        }
+
+        if (windowList.isEmpty()) return
+
+        val ownPkg = packageName
+        val best = windowList
+            .asSequence()
+            .filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
+            .sortedByDescending { it.layer }
+            .mapNotNull { window ->
+                val pkg = window.root?.packageName?.toString() ?: return@mapNotNull null
+                if (pkg == ownPkg) null else window to pkg
+            }
+            .firstOrNull()
+            ?: return
+
+        val (window, pkg) = best
+        if (pkg == currentForegroundPackage && window.title?.toString() == currentWindowTitle) return
+
+        currentForegroundPackage = pkg
+        currentWindowTitle = window.title?.toString()
+        currentForegroundAppLabel = try {
+            val appInfo = packageManager.getApplicationInfo(pkg, 0)
+            packageManager.getApplicationLabel(appInfo).toString()
+        } catch (_: Exception) {
+            null
+        }
+
+        Log.d(TAG, "Foreground app (topmost window): $currentForegroundAppLabel ($pkg), title: $currentWindowTitle")
     }
 
     override fun onInterrupt() {
@@ -914,12 +955,17 @@ class YomidroidAccessibilityService : AccessibilityService() {
         clearLookupCache()
     }
 
-    private fun exportToAnki(entry: com.yomidroid.dictionary.DictionaryEntry, sentence: String) {
+    private fun exportToAnki(
+        entry: com.yomidroid.dictionary.DictionaryEntry,
+        sentence: String,
+        popupIndex: Int = -1
+    ) {
         val exporter = ankiExporter ?: return
         val overlay = overlayView ?: return
 
         // Set loading state immediately
         overlay.setAnkiButtonLoading()
+        if (popupIndex >= 0) overlayPopupWebView?.setAnkiResult(popupIndex, "loading")
 
         serviceScope.launch {
             val result = exporter.exportCard(entry, sentence, currentScreenshot)
@@ -928,14 +974,17 @@ class YomidroidAccessibilityService : AccessibilityService() {
                 when (result) {
                     is ExportResult.Success -> {
                         overlay.setAnkiButtonSuccess()
+                        if (popupIndex >= 0) overlayPopupWebView?.setAnkiResult(popupIndex, "success")
                         Toast.makeText(this@YomidroidAccessibilityService, "Added to Anki!", Toast.LENGTH_SHORT).show()
                     }
                     is ExportResult.AlreadyExists -> {
                         overlay.setAnkiButtonAlreadyExported()
+                        if (popupIndex >= 0) overlayPopupWebView?.setAnkiResult(popupIndex, "exists")
                         Toast.makeText(this@YomidroidAccessibilityService, "Already in Anki", Toast.LENGTH_SHORT).show()
                     }
                     is ExportResult.AnkiNotInstalled -> {
                         overlay.resetAnkiButtonState()
+                        if (popupIndex >= 0) overlayPopupWebView?.setAnkiResult(popupIndex, "error")
                         Toast.makeText(this@YomidroidAccessibilityService, "AnkiDroid not installed", Toast.LENGTH_LONG).show()
                         // Open Play Store
                         try {
@@ -948,18 +997,22 @@ class YomidroidAccessibilityService : AccessibilityService() {
                     }
                     is ExportResult.NotConfigured -> {
                         overlay.resetAnkiButtonState()
+                        if (popupIndex >= 0) overlayPopupWebView?.setAnkiResult(popupIndex, "error")
                         Toast.makeText(this@YomidroidAccessibilityService, "Configure Anki in Yomidroid settings", Toast.LENGTH_LONG).show()
                     }
                     is ExportResult.PermissionDenied -> {
                         overlay.resetAnkiButtonState()
+                        if (popupIndex >= 0) overlayPopupWebView?.setAnkiResult(popupIndex, "error")
                         Toast.makeText(this@YomidroidAccessibilityService, "AnkiDroid permission denied", Toast.LENGTH_LONG).show()
                     }
                     is ExportResult.ApiNotEnabled -> {
                         overlay.resetAnkiButtonState()
+                        if (popupIndex >= 0) overlayPopupWebView?.setAnkiResult(popupIndex, "error")
                         Toast.makeText(this@YomidroidAccessibilityService, "Enable Yomidroid in AnkiDroid Settings → Advanced → AnkiDroid API", Toast.LENGTH_LONG).show()
                     }
                     is ExportResult.Error -> {
                         overlay.resetAnkiButtonState()
+                        if (popupIndex >= 0) overlayPopupWebView?.setAnkiResult(popupIndex, "error")
                         Toast.makeText(this@YomidroidAccessibilityService, "Export failed: ${result.message}", Toast.LENGTH_LONG).show()
                     }
                 }
@@ -1068,7 +1121,12 @@ class YomidroidAccessibilityService : AccessibilityService() {
                         val textBounds = buildTextBounds(context, unifiedIndex, matchLen, sx, sy)
 
                         if (isDecoupledMode) {
-                            LookupResultRepository.updateEntries(entries, ocrResult.text)
+                            LookupResultRepository.updateEntries(
+                                entries = entries,
+                                sentence = ocrResult.text,
+                                context = this@YomidroidAccessibilityService,
+                                screenshot = currentScreenshot
+                            )
                         } else {
                             overlayPopupWebView?.show(
                                 container = container,
@@ -1077,9 +1135,9 @@ class YomidroidAccessibilityService : AccessibilityService() {
                                 maxWidth = (screenWidth * 0.9f).toInt(),
                                 maxHeight = (screenHeight * 0.65f).toInt(),
                                 customCss = null,
-                                onAnkiExport = { entry ->
+                                onAnkiExport = { entry, index ->
                                     val sentence = ocrResult.text
-                                    exportToAnki(entry, sentence)
+                                    exportToAnki(entry, sentence, popupIndex = index)
                                 }
                             )
                         }
@@ -1254,7 +1312,12 @@ class YomidroidAccessibilityService : AccessibilityService() {
             }
 
             if (isDecoupledMode) {
-                LookupResultRepository.updateEntries(entries, ocrResult.text)
+                LookupResultRepository.updateEntries(
+                    entries = entries,
+                    sentence = ocrResult.text,
+                    context = this@YomidroidAccessibilityService,
+                    screenshot = currentScreenshot
+                )
             } else {
                 overlayPopupWebView?.show(
                     container = container,
@@ -1263,8 +1326,8 @@ class YomidroidAccessibilityService : AccessibilityService() {
                     maxWidth = (screenWidth * 0.9f).toInt(),
                     maxHeight = (screenHeight * 0.65f).toInt(),
                     customCss = null,
-                    onAnkiExport = { entry ->
-                        exportToAnki(entry, ocrResult.text)
+                    onAnkiExport = { entry, index ->
+                        exportToAnki(entry, ocrResult.text, popupIndex = index)
                     }
                 )
             }

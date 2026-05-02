@@ -36,7 +36,7 @@ class OverlayPopupWebView(private val context: Context) {
     private var webView: WebView? = null
     private var currentContainer: FrameLayout? = null
     private var currentEntries: List<DictionaryEntry> = emptyList()
-    private var onAnkiExport: ((DictionaryEntry) -> Unit)? = null
+    private var onAnkiExport: ((DictionaryEntry, Int) -> Unit)? = null
     private val handler = Handler(Looper.getMainLooper())
     private var ttsManager: TtsManager? = null
     private var isPageLoaded = false
@@ -66,7 +66,7 @@ class OverlayPopupWebView(private val context: Context) {
         maxWidth: Int,
         maxHeight: Int,
         customCss: String?,
-        onAnkiExport: (DictionaryEntry) -> Unit
+        onAnkiExport: (DictionaryEntry, Int) -> Unit
     ) {
         if (entries.isEmpty()) return
 
@@ -185,6 +185,16 @@ class OverlayPopupWebView(private val context: Context) {
         webView?.evaluateJavascript("jumpEntry($delta)", null)
     }
 
+    /**
+     * Push the result of an Anki export back into the popup so the matching star
+     * button reflects the actual outcome. Statuses must match popup.js'
+     * setAnkiResult contract: "loading", "success", "exists", "error", "idle".
+     */
+    fun setAnkiResult(index: Int, status: String) {
+        val safe = status.replace("'", "")
+        webView?.evaluateJavascript("setAnkiResult($index, '$safe')", null)
+    }
+
     fun hide() {
         webView?.visibility = View.GONE
     }
@@ -294,7 +304,7 @@ class OverlayPopupWebView(private val context: Context) {
         fun ankiExport(index: Int) {
             val entry = currentEntries.getOrNull(index) ?: return
             handler.post {
-                onAnkiExport?.invoke(entry)
+                onAnkiExport?.invoke(entry, index)
             }
         }
 

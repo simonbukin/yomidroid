@@ -1,18 +1,25 @@
 package com.yomidroid
 
 import android.content.Intent
+import android.content.res.Configuration
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
@@ -27,6 +34,8 @@ import com.yomidroid.ui.InputSettingsScreen
 import com.yomidroid.ui.OcrSettingsScreen
 import com.yomidroid.ui.history.HistoryDetailScreen
 import com.yomidroid.ui.history.HistoryScreen
+import com.yomidroid.ui.history.HistoryScreenState
+import com.yomidroid.ui.history.rememberHistoryScreenState
 import com.yomidroid.ui.settings.SettingsScreen
 import com.yomidroid.ui.settings.DictionarySettingsScreen
 import com.yomidroid.ui.settings.TranslationSettingsScreen
@@ -79,6 +88,7 @@ class MainActivity : ComponentActivity() {
 
             YomidroidTheme(accentColor = Color(colorConfig.accentColor)) {
                 var currentScreen by remember { mutableStateOf<Screen>(Screen.Tools) }
+                val historyState = rememberHistoryScreenState()
 
                 when (currentScreen) {
                     Screen.AnkiSettings -> {
@@ -125,7 +135,8 @@ class MainActivity : ComponentActivity() {
                         MainAppContent(
                             currentScreen = currentScreen,
                             onNavigate = { currentScreen = it },
-                            onOpenAccessibilitySettings = { openAccessibilitySettings() }
+                            onOpenAccessibilitySettings = { openAccessibilitySettings() },
+                            historyState = historyState
                         )
                     }
                 }
@@ -143,50 +154,56 @@ class MainActivity : ComponentActivity() {
 fun MainAppContent(
     currentScreen: Screen,
     onNavigate: (Screen) -> Unit,
-    onOpenAccessibilitySettings: () -> Unit
+    onOpenAccessibilitySettings: () -> Unit,
+    historyState: HistoryScreenState
 ) {
+    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+
     Scaffold(
         bottomBar = {
-            NavigationBar {
-                NavigationBarItem(
-                    selected = currentScreen == Screen.History,
-                    onClick = { onNavigate(Screen.History) },
-                    icon = {
-                        Icon(
-                            painter = painterResource(id = R.drawable.ic_history),
-                            contentDescription = "History"
-                        )
-                    },
-                    label = { Text("History") }
-                )
-                NavigationBarItem(
-                    selected = currentScreen == Screen.Tools,
-                    onClick = { onNavigate(Screen.Tools) },
-                    icon = {
-                        Icon(
-                            painter = painterResource(id = R.drawable.ic_tools),
-                            contentDescription = "Tools"
-                        )
-                    },
-                    label = { Text("Tools") }
-                )
-                NavigationBarItem(
-                    selected = currentScreen == Screen.Settings,
-                    onClick = { onNavigate(Screen.Settings) },
-                    icon = {
-                        Icon(
-                            if (currentScreen == Screen.Settings) Icons.Filled.Settings else Icons.Outlined.Settings,
-                            contentDescription = "Settings"
-                        )
-                    },
-                    label = { Text("Settings") }
-                )
+            if (!isLandscape) {
+                NavigationBar {
+                    NavigationBarItem(
+                        selected = currentScreen == Screen.History,
+                        onClick = { onNavigate(Screen.History) },
+                        icon = {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_history),
+                                contentDescription = "History"
+                            )
+                        },
+                        label = { Text("History") }
+                    )
+                    NavigationBarItem(
+                        selected = currentScreen == Screen.Tools,
+                        onClick = { onNavigate(Screen.Tools) },
+                        icon = {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_tools),
+                                contentDescription = "Tools"
+                            )
+                        },
+                        label = { Text("Tools") }
+                    )
+                    NavigationBarItem(
+                        selected = currentScreen == Screen.Settings,
+                        onClick = { onNavigate(Screen.Settings) },
+                        icon = {
+                            Icon(
+                                if (currentScreen == Screen.Settings) Icons.Filled.Settings else Icons.Outlined.Settings,
+                                contentDescription = "Settings"
+                            )
+                        },
+                        label = { Text("Settings") }
+                    )
+                }
             }
         }
     ) { padding ->
         Box(modifier = Modifier.padding(padding)) {
             when (currentScreen) {
                 Screen.History -> HistoryScreen(
+                    historyState = historyState,
                     onNavigateToDetail = { id -> onNavigate(Screen.HistoryDetail(id)) }
                 )
                 Screen.Tools -> ToolsScreen(
@@ -212,6 +229,89 @@ fun MainAppContent(
                     onNavigateToDictionarySearch = { onNavigate(Screen.DictionarySearch) }
                 )
             }
+
+            if (isLandscape) {
+                FloatingNavPill(
+                    currentScreen = currentScreen,
+                    onNavigate = onNavigate,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(16.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FloatingNavPill(
+    currentScreen: Screen,
+    onNavigate: (Screen) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(50),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        tonalElevation = 6.dp,
+        shadowElevation = 6.dp
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            PillNavItem(
+                selected = currentScreen == Screen.History,
+                onClick = { onNavigate(Screen.History) }
+            ) { tint ->
+                Icon(
+                    painter = painterResource(id = R.drawable.ic_history),
+                    contentDescription = "History",
+                    tint = tint
+                )
+            }
+            PillNavItem(
+                selected = currentScreen == Screen.Tools,
+                onClick = { onNavigate(Screen.Tools) }
+            ) { tint ->
+                Icon(
+                    painter = painterResource(id = R.drawable.ic_tools),
+                    contentDescription = "Tools",
+                    tint = tint
+                )
+            }
+            PillNavItem(
+                selected = currentScreen == Screen.Settings,
+                onClick = { onNavigate(Screen.Settings) }
+            ) { tint ->
+                Icon(
+                    if (currentScreen == Screen.Settings) Icons.Filled.Settings else Icons.Outlined.Settings,
+                    contentDescription = "Settings",
+                    tint = tint
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PillNavItem(
+    selected: Boolean,
+    onClick: () -> Unit,
+    icon: @Composable (tint: Color) -> Unit
+) {
+    val bg = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent
+    val fg = if (selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+    Box(
+        modifier = Modifier
+            .size(44.dp)
+            .clip(CircleShape)
+            .background(bg),
+        contentAlignment = Alignment.Center
+    ) {
+        IconButton(onClick = onClick, modifier = Modifier.size(44.dp)) {
+            icon(fg)
         }
     }
 }
