@@ -74,6 +74,18 @@
             </intent-filter>
         </service>
 
+        <!-- Quick Settings Tile for toggling decoupled mode -->
+        <service
+            android:name=".service.DecoupledModeTileService"
+            android:icon="@drawable/ic_tile_decoupled"
+            android:label="@string/decoupled_tile_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
     </application>
 
 </manifest>

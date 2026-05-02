@@ -11,14 +11,21 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MenuBook
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Translate
+import androidx.compose.material.icons.outlined.MenuBook
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Translate
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -36,26 +43,20 @@ import com.yomidroid.ui.history.HistoryDetailScreen
 import com.yomidroid.ui.history.HistoryScreen
 import com.yomidroid.ui.history.HistoryScreenState
 import com.yomidroid.ui.history.rememberHistoryScreenState
-import com.yomidroid.ui.settings.SettingsScreen
+import com.yomidroid.ui.library.LibraryScreen
+import com.yomidroid.ui.now.NowScreen
+import com.yomidroid.ui.search.SearchScreen
 import com.yomidroid.ui.settings.DictionarySettingsScreen
+import com.yomidroid.ui.settings.SettingsScreen
 import com.yomidroid.ui.settings.TranslationSettingsScreen
 import com.yomidroid.ui.theme.YomidroidTheme
-import com.yomidroid.ui.tools.DictionarySearchScreen
-import com.yomidroid.ui.tools.GrammarAnalyzerScreen
-import com.yomidroid.ui.tools.GrammarLibraryScreen
-import com.yomidroid.ui.tools.ToolsScreen
-import com.yomidroid.ui.tools.LiveLookupScreen
-import com.yomidroid.ui.tools.TranslationToolScreen
 
 sealed class Screen(val route: String) {
+    object Now : Screen("now")
+    object Search : Screen("search")
+    object Library : Screen("library")
     object History : Screen("history")
     data class HistoryDetail(val id: Long) : Screen("history_detail")
-    object Tools : Screen("tools")
-    object GrammarAnalyzer : Screen("grammar_analyzer")
-    object GrammarLibrary : Screen("grammar_library")
-    object TranslationTool : Screen("translation_tool")
-    object DictionarySearch : Screen("dictionary_search")
-    object LiveLookup : Screen("live_lookup")
     object Settings : Screen("settings")
     object AnkiSettings : Screen("anki_settings")
     object ColorSettings : Screen("color_settings")
@@ -87,43 +88,16 @@ class MainActivity : ComponentActivity() {
             }
 
             YomidroidTheme(accentColor = Color(colorConfig.accentColor)) {
-                var currentScreen by remember { mutableStateOf<Screen>(Screen.Tools) }
+                var currentScreen by remember { mutableStateOf<Screen>(Screen.Now) }
                 val historyState = rememberHistoryScreenState()
 
                 when (currentScreen) {
-                    Screen.AnkiSettings -> {
-                        AnkiSettingsScreen(onBack = { currentScreen = Screen.Settings })
-                    }
-                    Screen.ColorSettings -> {
-                        ColorSettingsScreen(onBack = { currentScreen = Screen.Settings })
-                    }
-                    Screen.OcrSettings -> {
-                        OcrSettingsScreen(onBack = { currentScreen = Screen.Settings })
-                    }
-                    Screen.TranslationSettings -> {
-                        TranslationSettingsScreen(onNavigateBack = { currentScreen = Screen.Settings })
-                    }
-                    Screen.InputSettings -> {
-                        InputSettingsScreen(onBack = { currentScreen = Screen.Settings })
-                    }
-                    Screen.DictionarySettings -> {
-                        DictionarySettingsScreen(onBack = { currentScreen = Screen.Settings })
-                    }
-                    Screen.GrammarAnalyzer -> {
-                        GrammarAnalyzerScreen(onBack = { currentScreen = Screen.Tools })
-                    }
-                    Screen.GrammarLibrary -> {
-                        GrammarLibraryScreen(onBack = { currentScreen = Screen.Tools })
-                    }
-                    Screen.TranslationTool -> {
-                        TranslationToolScreen(onBack = { currentScreen = Screen.Tools })
-                    }
-                    Screen.DictionarySearch -> {
-                        DictionarySearchScreen(onBack = { currentScreen = Screen.Tools })
-                    }
-                    Screen.LiveLookup -> {
-                        LiveLookupScreen(onBack = { currentScreen = Screen.Tools })
-                    }
+                    Screen.AnkiSettings -> AnkiSettingsScreen(onBack = { currentScreen = Screen.Settings })
+                    Screen.ColorSettings -> ColorSettingsScreen(onBack = { currentScreen = Screen.Settings })
+                    Screen.OcrSettings -> OcrSettingsScreen(onBack = { currentScreen = Screen.Settings })
+                    Screen.TranslationSettings -> TranslationSettingsScreen(onNavigateBack = { currentScreen = Screen.Settings })
+                    Screen.InputSettings -> InputSettingsScreen(onBack = { currentScreen = Screen.Settings })
+                    Screen.DictionarySettings -> DictionarySettingsScreen(onBack = { currentScreen = Screen.Settings })
                     is Screen.HistoryDetail -> {
                         val detailScreen = currentScreen as Screen.HistoryDetail
                         HistoryDetailScreen(
@@ -149,6 +123,26 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+private data class TopDest(
+    val screen: Screen,
+    val label: String,
+    val iconSelected: ImageVector? = null,
+    val iconUnselected: ImageVector? = null,
+    val iconDrawable: Int? = null
+)
+
+private val TOP_DESTINATIONS = listOf(
+    TopDest(Screen.Now, "Now",
+        iconSelected = Icons.Filled.Translate, iconUnselected = Icons.Outlined.Translate),
+    TopDest(Screen.Search, "Search",
+        iconSelected = Icons.Filled.Search, iconUnselected = Icons.Outlined.Search),
+    TopDest(Screen.Library, "Library",
+        iconSelected = Icons.Filled.MenuBook, iconUnselected = Icons.Outlined.MenuBook),
+    TopDest(Screen.History, "History", iconDrawable = R.drawable.ic_history),
+    TopDest(Screen.Settings, "Settings",
+        iconSelected = Icons.Filled.Settings, iconUnselected = Icons.Outlined.Settings),
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainAppContent(
@@ -163,55 +157,26 @@ fun MainAppContent(
         bottomBar = {
             if (!isLandscape) {
                 NavigationBar {
-                    NavigationBarItem(
-                        selected = currentScreen == Screen.History,
-                        onClick = { onNavigate(Screen.History) },
-                        icon = {
-                            Icon(
-                                painter = painterResource(id = R.drawable.ic_history),
-                                contentDescription = "History"
-                            )
-                        },
-                        label = { Text("History") }
-                    )
-                    NavigationBarItem(
-                        selected = currentScreen == Screen.Tools,
-                        onClick = { onNavigate(Screen.Tools) },
-                        icon = {
-                            Icon(
-                                painter = painterResource(id = R.drawable.ic_tools),
-                                contentDescription = "Tools"
-                            )
-                        },
-                        label = { Text("Tools") }
-                    )
-                    NavigationBarItem(
-                        selected = currentScreen == Screen.Settings,
-                        onClick = { onNavigate(Screen.Settings) },
-                        icon = {
-                            Icon(
-                                if (currentScreen == Screen.Settings) Icons.Filled.Settings else Icons.Outlined.Settings,
-                                contentDescription = "Settings"
-                            )
-                        },
-                        label = { Text("Settings") }
-                    )
+                    TOP_DESTINATIONS.forEach { dest ->
+                        NavigationBarItem(
+                            selected = currentScreen == dest.screen,
+                            onClick = { onNavigate(dest.screen) },
+                            icon = { DestIcon(dest, currentScreen == dest.screen) },
+                            label = { Text(dest.label) }
+                        )
+                    }
                 }
             }
         }
     ) { padding ->
         Box(modifier = Modifier.padding(padding)) {
             when (currentScreen) {
+                Screen.Now -> NowScreen()
+                Screen.Search -> SearchScreen()
+                Screen.Library -> LibraryScreen()
                 Screen.History -> HistoryScreen(
                     historyState = historyState,
                     onNavigateToDetail = { id -> onNavigate(Screen.HistoryDetail(id)) }
-                )
-                Screen.Tools -> ToolsScreen(
-                    onNavigateToGrammar = { onNavigate(Screen.GrammarAnalyzer) },
-                    onNavigateToGrammarLibrary = { onNavigate(Screen.GrammarLibrary) },
-                    onNavigateToTranslation = { onNavigate(Screen.TranslationTool) },
-                    onNavigateToDictionarySearch = { onNavigate(Screen.DictionarySearch) },
-                    onNavigateToLiveLookup = { onNavigate(Screen.LiveLookup) }
                 )
                 Screen.Settings -> SettingsScreen(
                     onOpenAnkiSettings = { onNavigate(Screen.AnkiSettings) },
@@ -222,12 +187,7 @@ fun MainAppContent(
                     onOpenDictionarySettings = { onNavigate(Screen.DictionarySettings) },
                     onOpenAccessibilitySettings = onOpenAccessibilitySettings
                 )
-                else -> ToolsScreen(
-                    onNavigateToGrammar = { onNavigate(Screen.GrammarAnalyzer) },
-                    onNavigateToGrammarLibrary = { onNavigate(Screen.GrammarLibrary) },
-                    onNavigateToTranslation = { onNavigate(Screen.TranslationTool) },
-                    onNavigateToDictionarySearch = { onNavigate(Screen.DictionarySearch) }
-                )
+                else -> NowScreen()
             }
 
             if (isLandscape) {
@@ -239,6 +199,21 @@ fun MainAppContent(
                         .padding(16.dp)
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun DestIcon(dest: TopDest, selected: Boolean) {
+    when {
+        dest.iconDrawable != null ->
+            Icon(
+                painter = painterResource(id = dest.iconDrawable),
+                contentDescription = dest.label
+            )
+        else -> {
+            val icon = if (selected) dest.iconSelected else dest.iconUnselected
+            icon?.let { Icon(it, contentDescription = dest.label) }
         }
     }
 }
@@ -261,35 +236,23 @@ private fun FloatingNavPill(
             horizontalArrangement = Arrangement.spacedBy(4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            PillNavItem(
-                selected = currentScreen == Screen.History,
-                onClick = { onNavigate(Screen.History) }
-            ) { tint ->
-                Icon(
-                    painter = painterResource(id = R.drawable.ic_history),
-                    contentDescription = "History",
-                    tint = tint
-                )
-            }
-            PillNavItem(
-                selected = currentScreen == Screen.Tools,
-                onClick = { onNavigate(Screen.Tools) }
-            ) { tint ->
-                Icon(
-                    painter = painterResource(id = R.drawable.ic_tools),
-                    contentDescription = "Tools",
-                    tint = tint
-                )
-            }
-            PillNavItem(
-                selected = currentScreen == Screen.Settings,
-                onClick = { onNavigate(Screen.Settings) }
-            ) { tint ->
-                Icon(
-                    if (currentScreen == Screen.Settings) Icons.Filled.Settings else Icons.Outlined.Settings,
-                    contentDescription = "Settings",
-                    tint = tint
-                )
+            TOP_DESTINATIONS.forEach { dest ->
+                PillNavItem(
+                    selected = currentScreen == dest.screen,
+                    onClick = { onNavigate(dest.screen) }
+                ) { tint ->
+                    when {
+                        dest.iconDrawable != null -> Icon(
+                            painter = painterResource(id = dest.iconDrawable),
+                            contentDescription = dest.label,
+                            tint = tint
+                        )
+                        else -> {
+                            val icon = if (currentScreen == dest.screen) dest.iconSelected else dest.iconUnselected
+                            icon?.let { Icon(it, contentDescription = dest.label, tint = tint) }
+                        }
+                    }
+                }
             }
         }
     }
@@ -315,4 +278,3 @@ private fun PillNavItem(
         }
     }
 }
-

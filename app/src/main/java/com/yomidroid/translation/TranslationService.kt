@@ -50,10 +50,22 @@ class TranslationService private constructor(context: Context) {
     ): TranslationResult? = withContext(Dispatchers.IO) {
         if (text.isBlank()) return@withContext null
 
+        // Hybrid Leipzig: tokenize locally with Kuromoji so the remote model can
+        // anchor its gloss array to a stable morpheme sequence (one gloss per token).
+        // Doubles as the offline fallback if every backend fails.
+        val morphemeHints = if (includeInterlinear) {
+            interlinearGenerator.generate(text).morphemes
+        } else null
+
+        val effectiveModes = if (includeInterlinear) {
+            modes + TranslationMode.INTERLINEAR
+        } else modes
+
         val request = TranslationRequest(
             text = text,
-            modes = modes,
-            includeInterlinear = includeInterlinear
+            modes = effectiveModes,
+            includeInterlinear = includeInterlinear,
+            morphemeHints = morphemeHints
         )
 
         // If preferred backend specified, only use that one
@@ -70,14 +82,13 @@ class TranslationService private constructor(context: Context) {
 
             // Check if backend supports requested modes
             val supportedModes = backend.supportedModes()
-            if (modes.none { it in supportedModes }) continue
+            if (effectiveModes.none { it in supportedModes }) continue
 
             val result = backend.translate(request)
             if (result != null) {
-                // Add interlinear if requested and not already provided
+                // Backend may have skipped the Leipzig array — fall back to local Kuromoji glosses.
                 val finalResult = if (includeInterlinear && result.interlinear == null) {
-                    val interlinear = interlinearGenerator.generate(text)
-                    result.copy(interlinear = interlinear)
+                    result.copy(interlinear = InterlinearResult(morphemeHints ?: emptyList()))
                 } else {
                     result
                 }
@@ -86,7 +97,17 @@ class TranslationService private constructor(context: Context) {
             }
         }
 
-        // Backend(s) failed
+        // Backend(s) failed — return Kuromoji-only result so the user still sees something useful.
+        if (includeInterlinear && morphemeHints != null) {
+            return@withContext TranslationResult(
+                originalText = text,
+                natural = null,
+                literal = null,
+                interlinear = InterlinearResult(morphemeHints),
+                backend = "On-device (Kuromoji)",
+                notes = "Translation backend unavailable. Showing local morpheme breakdown only."
+            )
+        }
         null
     }
 

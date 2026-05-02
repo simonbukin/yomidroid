@@ -3,6 +3,8 @@ package com.yomidroid.translation
 import android.content.Context
 import android.content.SharedPreferences
 import com.google.gson.Gson
+import com.google.gson.JsonElement
+import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.google.gson.annotations.SerializedName
 import kotlinx.coroutines.Dispatchers
@@ -94,35 +96,47 @@ class RemoteApiBackend(
             if (!enabled) return@withContext null
             val (systemPrompt, userPrompt) = buildPrompt(request)
             val response = callApi(systemPrompt, userPrompt, useJsonMode = true) ?: return@withContext null
-            parseResponse(request.text, response)
+            parseResponse(request.text, response, request.morphemeHints)
         }
 
     private fun buildPrompt(request: TranslationRequest): Pair<String?, String> {
         val wantNatural = TranslationMode.NATURAL in request.modes
         val wantLiteral = TranslationMode.LITERAL in request.modes
+        val wantLeipzig = TranslationMode.INTERLINEAR in request.modes
 
         val systemPrompt = "You are a Japanese language tutor helping a learner play a Japanese game. Translate accurately and explain key grammar."
 
-        return when {
-            wantNatural && wantLiteral -> systemPrompt to """Translate this Japanese to English. Respond with a JSON object containing:
-- "natural": fluent English translation
-- "literal": word-order-preserving translation with (implied words) in parentheses
-- "notes": array of 1-3 strings about key grammar, nuance, or cultural context (only non-obvious points)
+        // When Leipzig is requested with morpheme hints, anchor the gloss array to the local tokenization.
+        // The backend returns one gloss per surface, in order — we re-attach surface + reading on parse.
+        val leipzigBlock = if (wantLeipzig && !request.morphemeHints.isNullOrEmpty()) {
+            val surfaces = request.morphemeHints.joinToString(" ") { it.surface }
+            """
+- "leipzig": array of strings, ONE per morpheme, IN ORDER, glossing each morpheme with Leipzig conventions (e.g. NOM, ACC, TOP, GEN, DAT, PST, NEG, NPST, COP, POL, VOL, IMP, COND, PASS, CAUS, PROG, COMPL). For content words, use a short English gloss (e.g. "eat", "person"). For grammatical morphemes, use the standard Leipzig abbreviation. Match this exact morpheme sequence (whitespace-separated): $surfaces
+""".trim()
+        } else if (wantLeipzig) {
+            """
+- "leipzig": array of strings glossing each morpheme of the Japanese sentence in order using Leipzig conventions (NOM, ACC, TOP, PST, NEG, COP, POL, VOL, etc.). Content words get short English glosses; particles and auxiliaries get Leipzig abbreviations.
+""".trim()
+        } else null
 
-Japanese: ${request.text}"""
-
-            wantLiteral -> null to """Translate this Japanese literally. Respond with a JSON object containing:
-- "literal": word-order-preserving translation with (implied words) in parentheses
-
-Japanese: ${request.text}"""
-
-            else -> systemPrompt to """Translate this Japanese to English. Respond with a JSON object containing:
-- "natural": fluent English translation
-- "literal": word-order-preserving translation with (implied words) in parentheses
-- "notes": array of 1-3 strings about key grammar, nuance, or cultural context (only non-obvious points)
-
-Japanese: ${request.text}"""
+        val parts = buildList {
+            if (wantNatural) add("- \"natural\": fluent English translation")
+            if (wantLiteral) add("- \"literal\": word-order-preserving translation with (implied words) in parentheses")
+            if (leipzigBlock != null) add(leipzigBlock)
+            if (wantNatural || wantLiteral) {
+                add("- \"notes\": array of 1-3 strings about key grammar, nuance, or cultural context (only non-obvious points)")
+            }
         }
+
+        val userPrompt = buildString {
+            append("Translate this Japanese to English. Respond with a JSON object containing:\n")
+            parts.forEach { appendLine(it) }
+            append("\nJapanese: ").append(request.text)
+        }
+
+        // System prompt is only useful when we want natural translation; pure literal/leipzig requests skip it.
+        val sys = if (wantNatural) systemPrompt else null
+        return sys to userPrompt
     }
 
     private fun callApi(systemPrompt: String?, userPrompt: String, useJsonMode: Boolean = false): String? {
@@ -149,7 +163,7 @@ Japanese: ${request.text}"""
             model = modelName,
             messages = messages,
             temperature = 0.3,
-            maxTokens = 500,
+            maxTokens = 1500,
             responseFormat = if (useJsonMode) ResponseFormat("json_object") else null
         )
 
@@ -170,47 +184,59 @@ Japanese: ${request.text}"""
         return chatResponse.choices.firstOrNull()?.message?.content
     }
 
-    private fun parseResponse(originalText: String, response: String): TranslationResult {
+    private fun parseResponse(
+        originalText: String,
+        response: String,
+        morphemeHints: List<InterlinearMorpheme>?
+    ): TranslationResult {
         // Strip markdown code fences if present (e.g. ```json ... ```)
         val jsonCandidate = response.trim()
             .removePrefix("```json").removePrefix("```")
             .removeSuffix("```")
             .trim()
 
-        // Try JSON parse using JsonObject (avoids Gson data class reflection issues on Android)
         Log.d("TranslationParse", "Raw response: $response")
         Log.d("TranslationParse", "JSON candidate: $jsonCandidate")
-        try {
-            val obj = JsonParser.parseString(sanitizeJsonNewlines(jsonCandidate)).asJsonObject
-            val natural = obj.get("natural")?.takeIf { !it.isJsonNull }?.asString
-            val literal = obj.get("literal")?.takeIf { !it.isJsonNull }?.asString
-            val notes = obj.get("notes")?.takeIf { it.isJsonArray }?.asJsonArray
-                ?.map { it.asString }
-            Log.d("TranslationParse", "Parsed: natural=$natural, literal=$literal, notes=$notes")
-            if (natural != null || literal != null) {
-                return TranslationResult(
-                    originalText = originalText,
-                    natural = natural,
-                    literal = literal,
-                    interlinear = null,
-                    backend = "$name ($modelName)",
-                    notes = notes?.joinToString("\n") { "• $it" }
-                )
-            }
+
+        // Try strict JSON parse first. We extract each field defensively so that one
+        // misshapen field (e.g. notes returned as a string instead of an array) doesn't
+        // poison the others — that bug is what dumped the raw JSON into the Natural section.
+        val parsed: JsonObject? = try {
+            JsonParser.parseString(sanitizeJsonNewlines(jsonCandidate)).asJsonObject
         } catch (e: Exception) {
             Log.e("TranslationParse", "JSON parse failed", e)
+            null
         }
 
-        // Fall back to text parsing for backends that ignore JSON mode
+        if (parsed != null) {
+            val natural = parsed.safeString("natural") ?: parsed.safeString("Natural")
+            val literal = parsed.safeString("literal") ?: parsed.safeString("Literal")
+            val leipzig = parsed.safeStringArray("leipzig") ?: parsed.safeStringArray("Leipzig")
+            val notesList = parsed.safeStringArray("notes") ?: parsed.safeStringArray("Notes")
+            val interlinear = buildInterlinear(leipzig, morphemeHints)
+
+            Log.d(
+                "TranslationParse",
+                "Parsed: natural=${natural?.take(40)}, literal=${literal?.take(40)}, leipzig=${leipzig?.size}, notes=${notesList?.size}"
+            )
+
+            return TranslationResult(
+                originalText = originalText,
+                natural = natural,
+                literal = literal,
+                interlinear = interlinear,
+                backend = "$name ($modelName)",
+                notes = notesList?.takeIf { it.isNotEmpty() }?.joinToString("\n") { "• $it" }
+            )
+        }
+
+        // Fall back to line-prefix parsing for backends that ignore JSON mode.
         var natural: String? = null
         var literal: String? = null
-        var notes: String? = null
-
-        val lines = response.lines()
-        var inNotes = false
         val notesLines = mutableListOf<String>()
+        var inNotes = false
 
-        for (line in lines) {
+        for (line in response.lines()) {
             when {
                 line.startsWith("Natural:", ignoreCase = true) -> {
                     inNotes = false
@@ -229,26 +255,22 @@ Japanese: ${request.text}"""
                     val rest = line.substringAfter(":").trim()
                     if (rest.isNotBlank()) notesLines.add(rest)
                 }
-                inNotes && line.isNotBlank() -> {
-                    notesLines.add(line.trim())
-                }
+                inNotes && line.isNotBlank() -> notesLines.add(line.trim())
             }
         }
 
-        if (notesLines.isNotEmpty()) {
-            notes = notesLines.joinToString("\n")
-        }
-
-        // If parsing failed, try to extract just the English part
+        // If even the line-prefix parser came up empty, surface a parse error rather than
+        // dumping the raw response into the Natural field — that's how a JSON blob ended
+        // up showing in the Natural section.
         if (natural == null && literal == null) {
-            val cleaned = response.lines()
-                .filterNot { line ->
-                    line.any { c -> c in '\u3040'..'\u30FF' || c in '\u4E00'..'\u9FFF' }
-                }
-                .joinToString(" ")
-                .trim()
-
-            natural = cleaned.ifBlank { response.trim() }
+            return TranslationResult(
+                originalText = originalText,
+                natural = null,
+                literal = null,
+                interlinear = null,
+                backend = "$name ($modelName)",
+                notes = "Could not parse model response. Raw output:\n${response.trim()}"
+            )
         }
 
         return TranslationResult(
@@ -257,8 +279,66 @@ Japanese: ${request.text}"""
             literal = literal,
             interlinear = null,
             backend = "$name ($modelName)",
-            notes = notes
+            notes = notesLines.takeIf { it.isNotEmpty() }?.joinToString("\n")
         )
+    }
+
+    /** Read a string field, tolerating non-string types and arrays (joined with spaces). */
+    private fun JsonObject.safeString(key: String): String? {
+        val el = this.get(key) ?: return null
+        if (el.isJsonNull) return null
+        return try {
+            when {
+                el.isJsonPrimitive && el.asJsonPrimitive.isString -> el.asString
+                el.isJsonPrimitive -> el.asString
+                el.isJsonArray -> el.asJsonArray.joinToString(" ") { piece ->
+                    if (piece.isJsonPrimitive) piece.asString else piece.toString()
+                }
+                else -> el.toString()
+            }.takeIf { it.isNotBlank() }
+        } catch (e: Exception) {
+            Log.w("TranslationParse", "safeString($key) failed: ${e.message}")
+            null
+        }
+    }
+
+    /** Read an array-of-strings field, tolerating null/missing/wrong-shape. */
+    private fun JsonObject.safeStringArray(key: String): List<String>? {
+        val el = this.get(key) ?: return null
+        if (el.isJsonNull || !el.isJsonArray) return null
+        return try {
+            el.asJsonArray.mapNotNull { piece: JsonElement ->
+                when {
+                    piece.isJsonNull -> null
+                    piece.isJsonPrimitive -> piece.asString
+                    else -> piece.toString()
+                }
+            }.takeIf { it.isNotEmpty() }
+        } catch (e: Exception) {
+            Log.w("TranslationParse", "safeStringArray($key) failed: ${e.message}")
+            null
+        }
+    }
+
+    /**
+     * Merge Gemini-produced gloss strings with locally-tokenized morpheme surface+reading.
+     * If the model returned the wrong arity we still salvage what we can — leftover morphemes
+     * fall back to their surface as gloss; extra glosses are dropped.
+     */
+    private fun buildInterlinear(
+        glosses: List<String>?,
+        morphemeHints: List<InterlinearMorpheme>?
+    ): InterlinearResult? {
+        if (glosses.isNullOrEmpty()) return null
+        val merged = if (morphemeHints != null) {
+            morphemeHints.mapIndexed { idx, hint ->
+                hint.copy(gloss = glosses.getOrNull(idx) ?: hint.surface)
+            }
+        } else {
+            // No tokenization context — surface == gloss source, reading unknown.
+            glosses.map { InterlinearMorpheme(surface = it, reading = "", gloss = it) }
+        }
+        return InterlinearResult(merged)
     }
 
     /** Escape literal newlines/carriage-returns inside JSON string values so Gson can parse them. */
