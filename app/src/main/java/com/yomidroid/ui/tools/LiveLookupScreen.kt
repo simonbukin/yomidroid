@@ -1,5 +1,6 @@
 package com.yomidroid.ui.tools
 
+import android.graphics.BitmapFactory
 import android.widget.Toast
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -14,11 +15,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.yomidroid.anki.AnkiDroidExporter
 import com.yomidroid.anki.ExportResult
+import com.yomidroid.dictionary.DictionaryEntry
 import com.yomidroid.dictionary.LookupResultRepository
 import com.yomidroid.ui.components.DictionaryEntryWebView
+import com.yomidroid.ui.components.rememberDictionaryWebViewController
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -28,8 +32,40 @@ fun LiveLookupScreen(
     val context = LocalContext.current
     val entries by LookupResultRepository.latestEntries.collectAsState()
     val sentence by LookupResultRepository.latestSentence.collectAsState()
+    val screenshotPath by LookupResultRepository.latestScreenshotPath.collectAsState()
     val ankiExporter = remember { AnkiDroidExporter(context) }
     val scope = rememberCoroutineScope()
+    val webViewController = rememberDictionaryWebViewController()
+
+    fun exportEntry(entry: DictionaryEntry, index: Int) {
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                val screenshot = screenshotPath?.let { path ->
+                    val file = File(path)
+                    if (file.exists()) BitmapFactory.decodeFile(path) else null
+                }
+                ankiExporter.exportCard(entry, sentence ?: "", screenshot)
+            }
+            val (status, message, length) = when (result) {
+                is ExportResult.Success ->
+                    Triple("success", "Added to Anki!", Toast.LENGTH_SHORT)
+                is ExportResult.AlreadyExists ->
+                    Triple("exists", "Already in Anki", Toast.LENGTH_SHORT)
+                is ExportResult.AnkiNotInstalled ->
+                    Triple("error", "AnkiDroid not installed", Toast.LENGTH_LONG)
+                is ExportResult.NotConfigured ->
+                    Triple("error", "Configure Anki in settings first", Toast.LENGTH_LONG)
+                is ExportResult.PermissionDenied ->
+                    Triple("error", "AnkiDroid permission denied", Toast.LENGTH_LONG)
+                is ExportResult.ApiNotEnabled ->
+                    Triple("error", "Enable Yomidroid in AnkiDroid Settings → Advanced → AnkiDroid API", Toast.LENGTH_LONG)
+                is ExportResult.Error ->
+                    Triple("error", "Export failed: ${result.message}", Toast.LENGTH_LONG)
+            }
+            if (index >= 0) webViewController.setAnkiResult(index, status)
+            Toast.makeText(context, message, length).show()
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -65,6 +101,8 @@ fun LiveLookupScreen(
             ) {
                 DictionaryEntryWebView(
                     entries = entries,
+                    onAnkiExport = { entry, index -> exportEntry(entry, index) },
+                    controller = webViewController,
                     modifier = Modifier.fillMaxWidth()
                 )
 
@@ -73,23 +111,7 @@ fun LiveLookupScreen(
                 // Anki export button for the primary entry
                 entries.firstOrNull()?.let { entry ->
                     Button(
-                        onClick = {
-                            scope.launch {
-                                val result = withContext(Dispatchers.IO) {
-                                    ankiExporter.exportCard(entry, sentence ?: "", null)
-                                }
-                                val message = when (result) {
-                                    is ExportResult.Success -> "Exported to Anki"
-                                    is ExportResult.AlreadyExists -> "Card already exists"
-                                    is ExportResult.Error -> "Export failed: ${result.message}"
-                                    is ExportResult.AnkiNotInstalled -> "AnkiDroid not installed"
-                                    is ExportResult.PermissionDenied -> "Permission denied"
-                                    is ExportResult.ApiNotEnabled -> "Enable AnkiDroid API in settings"
-                                    is ExportResult.NotConfigured -> "Configure Anki export in settings"
-                                }
-                                Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
-                            }
-                        },
+                        onClick = { exportEntry(entry, 0) },
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp)

@@ -330,21 +330,61 @@ function createGroupedEntry(group, groupIndex) {
 //  Anki button — Anki logo icon
 // ============================================================
 
+// Idle state: the branded AnkiDroid-style star (mirrors res/drawable/ic_anki.xml).
+var ANKI_LOGO_SVG = '<svg width="20" height="20" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">' +
+    '<path fill="#B0BEC5" transform="translate(0 1)" d="M12,3.5l2.5,5.5 6,0.8 -4.3,4.2 1,5.8 -5.2,-2.7 -5.2,2.7 1,-5.8 -4.3,-4.2 6,-0.8z"/>' +
+    '<path fill="#FFFFFF" d="M12,2.5l2.8,5.8 6.4,0.9 -4.6,4.5 1.1,6.3 -5.7,-3 -5.7,3 1.1,-6.3 -4.6,-4.5 6.4,-0.9z"/>' +
+    '<path fill="#2196F3" d="M12,4l2.2,4.8 5.3,0.7 -3.8,3.7 0.9,5.3 -4.6,-2.4 -4.6,2.4 0.9,-5.3 -3.8,-3.7 5.3,-0.7z"/>' +
+    '</svg>';
+var CHECK_SVG = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 12 10 17 19 7"/></svg>';
+var SPINNER_SVG = '<svg width="18" height="18" viewBox="0 0 50 50" class="anki-spinner"><circle cx="25" cy="25" r="20" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-dasharray="80 200"/></svg>';
+
 function createAnkiButton(index) {
     var btn = createElement('button', 'action-btn anki-btn');
     btn.title = 'Add to Anki';
-    // Anki star/diamond icon (outline)
-    btn.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 22 12 18.56 5.82 22 7 14.14l-5-4.87 6.91-1.01L12 2z"/></svg>';
+    btn.setAttribute('data-anki-index', String(index));
+    btn.innerHTML = ANKI_LOGO_SVG;
     btn.onclick = function(e) {
         e.stopPropagation();
-        if (window.YomidroidPopup) {
+        if (btn.disabled) return;
+        if (window.YomidroidPopup && typeof window.YomidroidPopup.ankiExport === 'function') {
+            setAnkiButtonState(btn, 'loading');
             window.YomidroidPopup.ankiExport(index);
-            btn.classList.add('exported');
-            // Filled star
-            btn.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1" stroke-linejoin="round"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 22 12 18.56 5.82 22 7 14.14l-5-4.87 6.91-1.01L12 2z"/></svg>';
         }
     };
     return btn;
+}
+
+function setAnkiButtonState(btn, status) {
+    btn.classList.remove('loading', 'success', 'exists', 'error', 'exported');
+    btn.disabled = false;
+    switch (status) {
+        case 'loading':
+            btn.classList.add('loading');
+            btn.disabled = true;
+            btn.innerHTML = SPINNER_SVG;
+            break;
+        case 'success':
+            btn.classList.add('success');
+            btn.innerHTML = CHECK_SVG;
+            break;
+        case 'exists':
+            btn.classList.add('exists');
+            btn.innerHTML = CHECK_SVG;
+            break;
+        case 'error':
+        case 'idle':
+        default:
+            btn.innerHTML = ANKI_LOGO_SVG;
+            break;
+    }
+}
+
+// Called from Kotlin once the export pipeline finishes.
+function setAnkiResult(index, status) {
+    var btn = document.querySelector('button.anki-btn[data-anki-index="' + index + '"]');
+    if (!btn) return;
+    setAnkiButtonState(btn, status);
 }
 
 // ============================================================

@@ -3,6 +3,7 @@ package com.yomidroid.ui.history
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.res.Configuration
 import android.graphics.BitmapFactory
 import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -11,19 +12,26 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -53,9 +61,34 @@ enum class TimeFilter(val label: String, val durationMs: Long) {
     THIS_WEEK("This week", 7 * 24 * 60 * 60 * 1000L)
 }
 
+@Stable
+class HistoryScreenState(
+    val searchQuery: MutableState<String>,
+    val selectedFilter: MutableState<TimeFilter>,
+    val listState: LazyListState,
+    val headerExpanded: MutableState<Boolean>,
+)
+
+@Composable
+fun rememberHistoryScreenState(): HistoryScreenState {
+    val searchQuery = rememberSaveable { mutableStateOf("") }
+    val selectedFilter = rememberSaveable(
+        saver = Saver(
+            save = { it.value.name },
+            restore = { mutableStateOf(TimeFilter.valueOf(it)) }
+        )
+    ) { mutableStateOf(TimeFilter.ALL) }
+    val listState = rememberLazyListState()
+    val headerExpanded = rememberSaveable { mutableStateOf(true) }
+    return remember(searchQuery, selectedFilter, listState, headerExpanded) {
+        HistoryScreenState(searchQuery, selectedFilter, listState, headerExpanded)
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HistoryScreen(
+    historyState: HistoryScreenState,
     onNavigateToDetail: (Long) -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -64,8 +97,10 @@ fun HistoryScreen(
     var historyItems by remember { mutableStateOf<List<LookupHistoryEntity>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var showClearDialog by remember { mutableStateOf(false) }
-    var selectedFilter by remember { mutableStateOf(TimeFilter.ALL) }
-    var searchQuery by remember { mutableStateOf("") }
+    var selectedFilter by historyState.selectedFilter
+    var searchQuery by historyState.searchQuery
+    var headerExpanded by historyState.headerExpanded
+    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
     // Statistics state
     var todayCount by remember { mutableIntStateOf(0) }
@@ -191,6 +226,14 @@ fun HistoryScreen(
             TopAppBar(
                 title = { Text("Lookup History") },
                 actions = {
+                    if (isLandscape) {
+                        IconButton(onClick = { headerExpanded = !headerExpanded }) {
+                            Icon(
+                                if (headerExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                contentDescription = if (headerExpanded) "Collapse header" else "Expand header"
+                            )
+                        }
+                    }
                     if (historyItems.isNotEmpty()) {
                         IconButton(onClick = { showClearDialog = true }) {
                             Icon(Icons.Default.Delete, contentDescription = "Clear all")
@@ -205,8 +248,8 @@ fun HistoryScreen(
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            // Search TextField - always visible unless loading
-            if (!isLoading) {
+            // Header: stats + search + filter chips. Collapsible in landscape.
+            if (!isLoading && (!isLandscape || headerExpanded)) {
                 // Statistics card (shown when not searching)
                 if (searchQuery.isEmpty() && totalUnique > 0) {
                     Card(
@@ -338,6 +381,7 @@ fun HistoryScreen(
                     else -> {
                         LazyColumn(
                             modifier = Modifier.fillMaxSize(),
+                            state = historyState.listState,
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {

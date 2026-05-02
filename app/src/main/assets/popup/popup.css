@@ -178,25 +178,43 @@ body {
    ============================================================ */
 .action-btn {
     background: none;
-    border: 1.5px solid var(--accent-color);
+    border: none;
+    padding: 0;
     color: var(--accent-color);
     width: 30px;
     height: 30px;
-    border-radius: 6px;
+    border-radius: 50%;
     cursor: pointer;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
-    transition: background 0.15s, border-color 0.15s, color 0.15s;
+    transition: background 0.15s, color 0.15s;
 }
 .action-btn:active {
     background: rgba(130,180,255,0.25);
 }
-.action-btn.exported {
-    border-color: #4caf50;
+.action-btn.exported,
+.action-btn.success {
     color: #4caf50;
-    background: rgba(76,175,80,0.1);
+}
+.action-btn.exists {
+    color: #ffa726;
+}
+.action-btn.loading {
+    cursor: progress;
+    opacity: 0.85;
+}
+.action-btn:disabled {
+    cursor: progress;
+}
+.anki-spinner {
+    animation: anki-spin 0.9s linear infinite;
+    transform-origin: 50% 50%;
+}
+@keyframes anki-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
 }
 
 /* ============================================================

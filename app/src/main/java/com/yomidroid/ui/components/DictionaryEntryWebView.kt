@@ -2,7 +2,10 @@ package com.yomidroid.ui.components
 
 import android.annotation.SuppressLint
 import android.graphics.Color
+import android.os.Handler
+import android.os.Looper
 import android.view.ViewGroup
+import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.layout.heightIn
@@ -15,6 +18,30 @@ import com.yomidroid.dictionary.DictionaryEntry
 import com.yomidroid.dictionary.EntrySerializer
 
 /**
+ * Controller for [DictionaryEntryWebView]. Lets the caller push the result of an
+ * Anki export back into the WebView so the in-popup star button reflects success,
+ * already-exists, or error states. Statuses match popup.js' setAnkiResult contract:
+ * "loading", "success", "exists", "error", "idle".
+ */
+class DictionaryWebViewController {
+    internal var webView: WebView? = null
+    internal var entries: List<DictionaryEntry> = emptyList()
+    internal var onAnkiExport: ((DictionaryEntry, Int) -> Unit)? = null
+
+    fun setAnkiResult(index: Int, status: String) {
+        val wv = webView ?: return
+        val safeStatus = status.replace("'", "")
+        wv.post {
+            wv.evaluateJavascript("setAnkiResult($index, '$safeStatus')", null)
+        }
+    }
+}
+
+@Composable
+fun rememberDictionaryWebViewController(): DictionaryWebViewController =
+    remember { DictionaryWebViewController() }
+
+/**
  * Composable that renders full DictionaryEntry list using popup.js/popup.css.
  * Provides visual parity with the overlay popup for in-app screens.
  */
@@ -24,6 +51,8 @@ fun DictionaryEntryWebView(
     entries: List<DictionaryEntry>,
     customCss: String? = null,
     dictionaryCssMap: Map<String, String> = emptyMap(),
+    onAnkiExport: ((DictionaryEntry, Int) -> Unit)? = null,
+    controller: DictionaryWebViewController = rememberDictionaryWebViewController(),
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -33,6 +62,13 @@ fun DictionaryEntryWebView(
     }
 
     var contentHeight by remember { mutableIntStateOf(200) }
+
+    // Keep the controller's view of entries + callback fresh on every recomposition,
+    // since the JS bridge dispatches through it.
+    SideEffect {
+        controller.entries = entries
+        controller.onAnkiExport = onAnkiExport
+    }
 
     AndroidView(
         modifier = modifier.heightIn(min = 50.dp, max = 600.dp),
@@ -48,6 +84,11 @@ fun DictionaryEntryWebView(
                 settings.allowFileAccess = true
                 @Suppress("DEPRECATION")
                 settings.allowFileAccessFromFileURLs = true
+
+                addJavascriptInterface(
+                    DictionaryWebViewBridge(controller),
+                    "YomidroidPopup"
+                )
 
                 webViewClient = object : WebViewClient() {
                     override fun onPageFinished(view: WebView?, url: String?) {
@@ -70,11 +111,37 @@ fun DictionaryEntryWebView(
                 }
 
                 loadUrl("file:///android_asset/popup/popup.html")
+                controller.webView = this
             }
         },
         update = { webView ->
+            controller.webView = webView
             val escaped = json.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
             webView.evaluateJavascript("setEntries('$escaped')", null)
         }
     )
+}
+
+private class DictionaryWebViewBridge(
+    private val controller: DictionaryWebViewController
+) {
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    @JavascriptInterface
+    fun ankiExport(index: Int) {
+        mainHandler.post {
+            val entry = controller.entries.getOrNull(index) ?: return@post
+            controller.onAnkiExport?.invoke(entry, index)
+        }
+    }
+
+    @JavascriptInterface
+    fun reportContentHeight(heightPx: Int) {
+        // No-op: in-screen variant does not auto-resize.
+    }
+
+    @JavascriptInterface
+    fun speak(text: String) {
+        // No-op: TTS only wired in the overlay variant.
+    }
 }

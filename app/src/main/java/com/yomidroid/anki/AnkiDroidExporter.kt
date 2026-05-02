@@ -244,26 +244,30 @@ class AnkiDroidExporter(private val context: Context) {
             // Get field names for the model
             val fieldNames = api.getFieldList(config.modelId) ?: return ExportResult.Error("Could not get model fields")
 
-            // Check for duplicates based on configured duplicate check field
-            val duplicateCheckField = config.duplicateCheckField
-            val duplicateCheckAnkiField = config.fieldMappings[duplicateCheckField]
+            // Check for duplicates based on configured duplicate check field.
+            // Skipped entirely when the user opts in to "Allow duplicates" — session
+            // cache above still debounces accidental double-taps in one overlay session.
+            if (!config.allowDuplicates) {
+                val duplicateCheckField = config.duplicateCheckField
+                val duplicateCheckAnkiField = config.fieldMappings[duplicateCheckField]
 
-            if (duplicateCheckAnkiField != null) {
-                val fieldIndex = fieldNames.indexOf(duplicateCheckAnkiField)
-                // findDuplicateNotes only works on the first field, so only check if mapped there
-                if (fieldIndex == 0) {
-                    val checkValue = when (duplicateCheckField) {
-                        YomidroidField.EXPRESSION -> entry.expression
-                        YomidroidField.READING -> entry.reading
-                        YomidroidField.DEFINITION -> entry.glossary.firstOrNull() ?: ""
-                        YomidroidField.SENTENCE -> sentence
-                        else -> entry.expression
-                    }
-                    val duplicates = api.findDuplicateNotes(config.modelId, checkValue)
-                    if (duplicates != null && duplicates.isNotEmpty()) {
-                        Log.d(TAG, "Found ${duplicates.size} duplicate notes for $checkValue")
-                        exportedEntries.add(entryKey)
-                        return ExportResult.AlreadyExists
+                if (duplicateCheckAnkiField != null) {
+                    val fieldIndex = fieldNames.indexOf(duplicateCheckAnkiField)
+                    // findDuplicateNotes only works on the first field, so only check if mapped there
+                    if (fieldIndex == 0) {
+                        val checkValue = when (duplicateCheckField) {
+                            YomidroidField.EXPRESSION -> entry.expression
+                            YomidroidField.READING -> entry.reading
+                            YomidroidField.DEFINITION -> entry.glossary.firstOrNull() ?: ""
+                            YomidroidField.SENTENCE -> sentence
+                            else -> entry.expression
+                        }
+                        val duplicates = api.findDuplicateNotes(config.modelId, checkValue)
+                        if (duplicates != null && duplicates.isNotEmpty()) {
+                            Log.d(TAG, "Found ${duplicates.size} duplicate notes for $checkValue")
+                            exportedEntries.add(entryKey)
+                            return ExportResult.AlreadyExists
+                        }
                     }
                 }
             }

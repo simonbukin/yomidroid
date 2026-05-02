@@ -27,7 +27,8 @@ data class AnkiConfig(
     val modelId: Long = -1L,
     val modelName: String = "",
     val fieldMappings: Map<YomidroidField, String> = emptyMap(),
-    val duplicateCheckField: YomidroidField = YomidroidField.EXPRESSION  // Which field to use for duplicate checking
+    val duplicateCheckField: YomidroidField = YomidroidField.EXPRESSION,  // Which field to use for duplicate checking
+    val allowDuplicates: Boolean = false  // When true, skip the AnkiDroid-collection duplicate check (session cache still debounces double-taps)
 ) {
     fun isConfigured(): Boolean {
         return deckId > 0 && modelId > 0 && fieldMappings.isNotEmpty()
@@ -52,6 +53,7 @@ class AnkiConfigManager(context: Context) {
         private const val KEY_MODEL_NAME = "model_name"
         private const val KEY_FIELD_MAPPINGS = "field_mappings"
         private const val KEY_DUPLICATE_CHECK_FIELD = "duplicate_check_field"
+        private const val KEY_ALLOW_DUPLICATES = "allow_duplicates"
     }
 
     fun getConfig(): AnkiConfig {
@@ -81,7 +83,8 @@ class AnkiConfigManager(context: Context) {
             modelId = prefs.getLong(KEY_MODEL_ID, -1L),
             modelName = prefs.getString(KEY_MODEL_NAME, "") ?: "",
             fieldMappings = mappings,
-            duplicateCheckField = duplicateCheckField
+            duplicateCheckField = duplicateCheckField,
+            allowDuplicates = prefs.getBoolean(KEY_ALLOW_DUPLICATES, false)
         )
     }
 
@@ -95,6 +98,7 @@ class AnkiConfigManager(context: Context) {
             .putString(KEY_MODEL_NAME, config.modelName)
             .putString(KEY_FIELD_MAPPINGS, mappingsJson)
             .putString(KEY_DUPLICATE_CHECK_FIELD, config.duplicateCheckField.name)
+            .putBoolean(KEY_ALLOW_DUPLICATES, config.allowDuplicates)
             .apply()
     }
 
