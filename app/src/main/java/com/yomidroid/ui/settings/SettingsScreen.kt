@@ -98,7 +98,39 @@ fun SettingsScreen(
 
             Divider(modifier = Modifier.padding(horizontal = 16.dp))
 
-            // Recognition Section
+            // Modes Section — fundamental on/off toggles (also exposed as Quick Settings tiles)
+            Text(
+                text = "Modes",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+            )
+
+            SettingsToggleItem(
+                title = "Show Floating Button",
+                subtitle = "Toggle the FAB overlay on/off. Also available as a Quick Settings tile.",
+                checked = isFabEnabled,
+                onCheckedChange = { enabled ->
+                    isFabEnabled = enabled
+                    colorConfigManager.setFabEnabled(enabled)
+                    YomidroidAccessibilityService.instance?.updateFabVisibility()
+                }
+            )
+
+            SettingsToggleItem(
+                title = "Decoupled Mode",
+                subtitle = "Show definitions in the Now tab instead of the overlay popup. Also available as a Quick Settings tile.",
+                checked = isDecoupledMode,
+                onCheckedChange = { enabled ->
+                    isDecoupledMode = enabled
+                    colorConfigManager.setDecoupledMode(enabled)
+                    YomidroidAccessibilityService.instance?.loadColors()
+                }
+            )
+
+            Divider(modifier = Modifier.padding(horizontal = 16.dp))
+
+            // Recognition Section — OCR + dictionaries
             Text(
                 text = "Recognition",
                 style = MaterialTheme.typography.titleSmall,
@@ -118,9 +150,19 @@ fun SettingsScreen(
                 onClick = onOpenOcrSettings
             )
 
+            Divider(modifier = Modifier.padding(horizontal = 16.dp))
+
+            // Translation Section — its own thing
+            Text(
+                text = "Translation",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+            )
+
             SettingsItem(
-                title = "Translation",
-                subtitle = "Configure remote API and on-device translation",
+                title = "Translation Backend",
+                subtitle = "Gemini Flash, on-device LLM, or ML Kit",
                 onClick = onOpenTranslationSettings
             )
 
@@ -142,7 +184,7 @@ fun SettingsScreen(
 
             Divider(modifier = Modifier.padding(horizontal = 16.dp))
 
-            // Appearance Section
+            // Appearance Section — visual only (colors)
             Text(
                 text = "Appearance",
                 style = MaterialTheme.typography.titleSmall,
@@ -155,62 +197,6 @@ fun SettingsScreen(
                 subtitle = "Customize FAB, highlights, and accent colors",
                 onClick = onOpenColorSettings
             )
-
-            // FAB visibility toggle (in-app alternative to Quick Settings tile)
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Show Floating Button",
-                        style = MaterialTheme.typography.bodyLarge
-                    )
-                    Text(
-                        text = "Toggle the FAB overlay on/off",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Switch(
-                    checked = isFabEnabled,
-                    onCheckedChange = { enabled ->
-                        isFabEnabled = enabled
-                        colorConfigManager.setFabEnabled(enabled)
-                        YomidroidAccessibilityService.instance?.updateFabVisibility()
-                    }
-                )
-            }
-
-            // Decoupled mode toggle
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Decoupled Mode",
-                        style = MaterialTheme.typography.bodyLarge
-                    )
-                    Text(
-                        text = "Show definitions in app instead of overlay",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Switch(
-                    checked = isDecoupledMode,
-                    onCheckedChange = { enabled ->
-                        isDecoupledMode = enabled
-                        colorConfigManager.setDecoupledMode(enabled)
-                        YomidroidAccessibilityService.instance?.loadColors()
-                    }
-                )
-            }
 
             Divider(modifier = Modifier.padding(horizontal = 16.dp))
 
@@ -268,6 +254,31 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
         }
+    }
+}
+
+@Composable
+private fun SettingsToggleItem(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = title, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 

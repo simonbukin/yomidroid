@@ -2,23 +2,40 @@
 
 Japanese OCR dictionary overlay for Android. Capture any screen, recognize Japanese text, and look up words with Yomitan-style deinflection.
 
+> **Heads up! this is mostly a personal-use app.** It's mostly vibecoded, optimized for what I happen to need, and lived-in daily on an [AYN Thor](https://www.ayntec.com/) for playing retro Japanese games. If it works for you too, great! If it doesn't, that's probably expected. Issues and PRs are welcome but not promised, I've got a full time job :)
+
 ## Features
 
 ### Core
 - Floating overlay button works over any app
-- Japanese OCR via ML Kit or RapidOCR
-- Tappable text with character-level precision
-- Longest-match lookup with full deinflection (1M+ dictionary entries)
-- Dictionary popup with readings, definitions, frequency ranking
-
-### Tools
-- **Grammar Library** - 428 JLPT N5-N2 grammar points with GameGengo video links
-- **Grammar Analyzer** - Morphological analysis with Kuromoji
-- **Translation** - Multi-backend: remote API, on-device LLM (llama.cpp), ML Kit
-
-### Integration
+- Japanese OCR via ML Kit or manga-ocr 
 - AnkiDroid export for flashcard creation
+- Longest-match lookup with full deinflection support
+- Yomitan dictionary compatible. Bring your own!
+- Dictionary popup with readings, definitions, frequency ranking
 - Lookup history with screenshots
+
+### In-app workspace
+
+The app organizes around five tabs in the bottom nav:
+
+- **Now** — the current scan workspace. Three sub-tabs over a shared editable sentence:
+- **Lookup** (decoupled mode only) — dictionary entries from your last tap, mirrored from the overlay.
+- **Parse** — Kuromoji morphology, bunsetsu chips, DOJG grammar matches with GameGengo / JLPTSensei links.
+- **Translate** — Natural / Literal / Leipzig gloss, powered by Gemini Flash with on-device Kuromoji as the offline fallback.
+- **Search** — universal search. Type any Japanese (a word, a conjugated form, a grammar pattern) and get dictionary entries + grammar library hits side-by-side.
+- **Library** — browse 428 JLPT N5–N1 grammar points with video and reference links.
+- **History** — every word lookup with screenshot, source app, time filters, Anki export per row.
+- **Settings** — permissions, modes, recognition, translation backend, Anki export, colors, hardware controls.
+
+### Modes
+
+Two operating modes, toggled from Settings or from a Quick Settings tile:
+
+- **Coupled (default)** — dictionary entries appear in the overlay popup right where you tapped.
+- **Decoupled** — overlay popup is suppressed and lookups appear in-app. This is meant for dual screen devices playing single screen games (eg. PSP VN on top screen, dictionary on bottom)
+
+Two Quick Settings tiles ship with the app: **Yomidroid** (toggle the floating button) and **Decoupled** (toggle decoupled mode). Drag down twice from the top of the screen and add them to your QS panel.
 
 ## Install
 
@@ -36,6 +53,7 @@ Releases are debug-signed and sideload-only — they can't upgrade a Play Store 
 3. **Import dictionaries.** The app ships without any built-in dictionary. Open *Settings → Dictionaries* and either:
    - Tap **Import Yomitan Dictionaries** to pick Yomitan-format `.zip` files you already have, or
    - Choose from the **Recommended** list to download common dictionaries directly — Jitendex (general), JMnedict (names/places), KANJIDIC, pitch accents, and frequency data.
+4. **(Optional) Configure translation.** Open *Settings → Translation Backend* to set up Gemini Flash (paste an API key) or an on-device LLM. The Translate sub-tab still works without a backend: it'll show a Kuromoji-only morpheme breakdown.
 
 Once at least one dictionary is loaded, lookups work end-to-end.
 
@@ -95,13 +113,9 @@ Or open in Android Studio and click Run.
 3. Tap highlighted text to look up words.
 4. Tap outside the popup to dismiss the overlay.
 
-### Tools
+To translate or parse the sentence you just tapped, open the app and head to **Now**. The sentence is already loaded, and you can edit it, tap **Translate** or **Analyze**, and you're done.
 
-Access via the **Tools** tab in the bottom navigation:
-
-- **Grammar Analyzer** - Paste text for morphological breakdown
-- **Grammar Library** - Browse JLPT grammar with video links
-- **Translation** - Translate text using various backends
+To look up something you remember from earlier without re-OCRing (or perhaps the OCR didn't scan correctly), use the **Search** tab. It queries the dictionary and the grammar library at the same time.
 
 ## Attribution
 
@@ -117,6 +131,7 @@ Access via the **Tools** tab in the bottom navigation:
 
 ### Core Libraries
 - [Yomitan](https://github.com/yomitan/yomitan) - Deinflection algorithm (GPL-3.0)
+- [Kuromoji](https://github.com/atilika/kuromoji) - Japanese morphological analysis
 - [llama.cpp](https://github.com/ggml-org/llama.cpp) - On-device LLM inference (MIT)
 - [Google ML Kit](https://developers.google.com/ml-kit) - OCR and translation
 - [RapidOCR](https://github.com/RapidAI/RapidOCR)/PaddleOCR - Alternative OCR (Apache 2.0)

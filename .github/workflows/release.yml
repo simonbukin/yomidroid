@@ -41,19 +41,48 @@ jobs:
       - name: Build debug APK
         run: ./gradlew assembleDebug --no-daemon --stacktrace
 
-      - name: Compute release metadata
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Compute APK metadata
         id: meta
         run: |
           SHORT_SHA="${GITHUB_SHA::7}"
           DATE="$(date -u +%Y-%m-%d)"
+          case "${GITHUB_EVENT_NAME}" in
+            pull_request)
+              SUFFIX="pr${{ github.event.pull_request.number }}-${SHORT_SHA}"
+              LABEL="PR #${{ github.event.pull_request.number }} · ${SHORT_SHA}"
+              ;;
+            push)
+              SUFFIX="${DATE}-${SHORT_SHA}"
+              LABEL="${DATE} · ${SHORT_SHA}"
+              ;;
+            *)
+              # workflow_dispatch / non-main pushes — slugify the ref
+              SLUG="$(echo "${GITHUB_REF_NAME}" | tr '/' '-' | tr -cd 'A-Za-z0-9._-')"
+              SUFFIX="${SLUG}-${SHORT_SHA}"
+              LABEL="${SLUG} · ${SHORT_SHA}"
+              ;;
+          esac
+          APK="yomidroid-${SUFFIX}.apk"
           TAG="build-${DATE}-${SHORT_SHA}"
-          APK="yomidroid-${SHORT_SHA}.apk"
-          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "apk=${APK}" >> "$GITHUB_OUTPUT"
+          {
+            echo "short_sha=${SHORT_SHA}"
+            echo "date=${DATE}"
+            echo "suffix=${SUFFIX}"
+            echo "apk=${APK}"
+            echo "tag=${TAG}"
+            echo "label=${LABEL}"
+          } >> "$GITHUB_OUTPUT"
           mkdir -p dist
           cp app/build/outputs/apk/debug/app-debug.apk "dist/${APK}"
+          ls -la dist/
+
+      - name: Upload APK as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.meta.outputs.apk }}
+          path: dist/${{ steps.meta.outputs.apk }}
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Create GitHub Release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -61,10 +90,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.meta.outputs.tag }}
           APK: ${{ steps.meta.outputs.apk }}
-          SHORT_SHA: ${{ steps.meta.outputs.short_sha }}
+          LABEL: ${{ steps.meta.outputs.label }}
         run: |
           NOTES=$(cat <<EOF
-          Auto-built from \`main\` @ ${SHORT_SHA}.
+          Auto-built from \`main\` @ ${LABEL}.
 
           **Debug-signed** — sideload via \`adb install\` or by enabling "Install unknown apps" for your file manager. Cannot upgrade an existing Play Store install.
 
@@ -74,6 +103,6 @@ jobs:
 
           gh release create "${TAG}" \
             "dist/${APK}" \
-            --title "Build ${SHORT_SHA}" \
+            --title "Yomidroid ${LABEL}" \
             --target "${GITHUB_SHA}" \
             --notes "${NOTES}"

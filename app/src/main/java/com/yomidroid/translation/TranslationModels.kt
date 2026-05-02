@@ -16,6 +16,9 @@ enum class TranslationMode {
 
 /**
  * Result of a translation request containing all three modes.
+ *
+ * `interlinear` is the Leipzig-style gloss: morpheme list with reading + per-morpheme
+ * gloss using Leipzig conventions (NOM, ACC, TOP, PST, NEG, COP, POL...).
  */
 @Immutable
 data class TranslationResult(
@@ -66,11 +69,16 @@ data class InterlinearMorpheme(
 
 /**
  * Translation request parameters.
+ *
+ * `morphemeHints` (when present) is a Kuromoji-tokenized morpheme list the backend
+ * may use to anchor a Leipzig gloss — same length, same order. Surface + reading are
+ * filled locally; the backend fills only the Leipzig label per morpheme.
  */
 data class TranslationRequest(
     val text: String,
     val modes: Set<TranslationMode> = setOf(TranslationMode.NATURAL, TranslationMode.LITERAL),
-    val includeInterlinear: Boolean = false
+    val includeInterlinear: Boolean = false,
+    val morphemeHints: List<InterlinearMorpheme>? = null
 )
 
 /**
