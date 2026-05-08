@@ -71,17 +71,41 @@ fun NowScreen() {
     val colorConfigManager = remember { ColorConfigManager(context) }
     val isDecoupledMode = remember { colorConfigManager.isDecoupledMode() }
 
+    val timestamp by OcrResultRepository.lastUpdateTimestamp.collectAsState()
     val latestSelectedSentence by OcrResultRepository.latestSelectedSentence.collectAsState()
     val latestOcrText by OcrResultRepository.latestOcrText.collectAsState()
 
-    var sentence by remember {
-        mutableStateOf(latestSelectedSentence ?: latestOcrText ?: "")
+    var sentence by remember { mutableStateOf("") }
+    var userInteracted by remember { mutableStateOf(false) }
+    var lastConsumedTimestamp by remember { mutableStateOf(0L) }
+    var lastConsumedSelected by remember { mutableStateOf<String?>(null) }
+    var loadVersion by remember { mutableStateOf(0) }
+
+    val hasFreshScan = (timestamp != 0L && timestamp != lastConsumedTimestamp) ||
+        (latestSelectedSentence != null && latestSelectedSentence != lastConsumedSelected)
+
+    fun loadLatestScan() {
+        val newText = latestSelectedSentence ?: latestOcrText ?: return
+        if (newText.isEmpty()) return
+        sentence = newText
+        userInteracted = false
+        lastConsumedTimestamp = timestamp
+        lastConsumedSelected = latestSelectedSentence
+        loadVersion++
     }
-    LaunchedEffect(latestSelectedSentence, latestOcrText) {
-        if (sentence.isBlank()) {
-            sentence = latestSelectedSentence ?: latestOcrText ?: ""
+
+    LaunchedEffect(timestamp, latestSelectedSentence) {
+        if (hasFreshScan && !userInteracted) {
+            loadLatestScan()
         }
     }
+
+    val onSentenceChange: (String) -> Unit = { newValue ->
+        sentence = newValue
+        userInteracted = true
+    }
+    val onInteracted: () -> Unit = { userInteracted = true }
+    val showFreshScanBanner = hasFreshScan && userInteracted
 
     // Lookup tab is only meaningful in decoupled mode (overlay popup is suppressed there).
     // In non-decoupled mode, dictionary entries appear in the overlay popup itself.
@@ -114,11 +138,64 @@ fun NowScreen() {
                 NowTab.LOOKUP -> LookupTab()
                 NowTab.PARSE -> ParseTab(
                     sentence = sentence,
-                    onSentenceChange = { sentence = it }
+                    onSentenceChange = onSentenceChange,
+                    onInteracted = onInteracted,
+                    showFreshScanBanner = showFreshScanBanner,
+                    onLoadLatestScan = ::loadLatestScan,
+                    loadVersion = loadVersion
                 )
                 NowTab.TRANSLATE -> TranslateTab(
                     sentence = sentence,
-                    onSentenceChange = { sentence = it }
+                    onSentenceChange = onSentenceChange,
+                    onInteracted = onInteracted,
+                    showFreshScanBanner = showFreshScanBanner,
+                    onLoadLatestScan = ::loadLatestScan,
+                    loadVersion = loadVersion
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FreshScanBanner(onLoadLatestScan: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.tertiaryContainer
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onLoadLatestScan() }
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Default.Refresh,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onTertiaryContainer,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "New scan available",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "Tap to replace with the latest scanned text",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer
+                )
+            }
+            TextButton(onClick = onLoadLatestScan) {
+                Text(
+                    "Replace",
+                    color = MaterialTheme.colorScheme.onTertiaryContainer
                 )
             }
         }
@@ -207,7 +284,11 @@ private fun LookupTab() {
 @Composable
 private fun ParseTab(
     sentence: String,
-    onSentenceChange: (String) -> Unit
+    onSentenceChange: (String) -> Unit,
+    onInteracted: () -> Unit,
+    showFreshScanBanner: Boolean,
+    onLoadLatestScan: () -> Unit,
+    loadVersion: Int
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -221,8 +302,17 @@ private fun ParseTab(
     var dictionaryMatches by remember { mutableStateOf<List<DictionaryEntryWithPosition>>(emptyList()) }
     var isAnalyzing by remember { mutableStateOf(false) }
 
+    LaunchedEffect(loadVersion) {
+        if (loadVersion > 0) {
+            analysisResult = null
+            resolvedGrammar = emptyList()
+            dictionaryMatches = emptyList()
+        }
+    }
+
     fun runAnalysis() {
         if (sentence.isBlank()) return
+        onInteracted()
         scope.launch {
             isAnalyzing = true
             val result = analyzer.analyze(sentence)
@@ -240,6 +330,9 @@ private fun ParseTab(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        if (showFreshScanBanner) {
+            item { FreshScanBanner(onLoadLatestScan) }
+        }
         item {
             OutlinedTextField(
                 value = sentence,
@@ -350,7 +443,11 @@ private fun ParseTab(
 @Composable
 private fun TranslateTab(
     sentence: String,
-    onSentenceChange: (String) -> Unit
+    onSentenceChange: (String) -> Unit,
+    onInteracted: () -> Unit,
+    showFreshScanBanner: Boolean,
+    onLoadLatestScan: () -> Unit,
+    loadVersion: Int
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -372,8 +469,16 @@ private fun TranslateTab(
         }
     }
 
+    LaunchedEffect(loadVersion) {
+        if (loadVersion > 0) {
+            result = null
+            error = null
+        }
+    }
+
     fun runTranslate() {
         if (sentence.isBlank()) return
+        onInteracted()
         scope.launch {
             isTranslating = true
             error = null
@@ -404,6 +509,9 @@ private fun TranslateTab(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        if (showFreshScanBanner) {
+            item { FreshScanBanner(onLoadLatestScan) }
+        }
         item {
             OutlinedTextField(
                 value = sentence,
