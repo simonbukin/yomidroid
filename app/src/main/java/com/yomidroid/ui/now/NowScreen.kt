@@ -52,6 +52,8 @@ import com.yomidroid.translation.TranslationResult
 import com.yomidroid.translation.TranslationService
 import com.yomidroid.tts.TtsManager
 import com.yomidroid.ui.components.DictionaryEntryWebView
+import com.yomidroid.ui.components.GrammarResourceTextButton
+import com.yomidroid.ui.components.GrammarSourcePills
 import com.yomidroid.ui.components.rememberDictionaryWebViewController
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -903,31 +905,16 @@ private fun DojgSection(
                     onClick = { selectedPoint = if (isSelected) null else point },
                     label = { Text(point.pattern) },
                     leadingIcon = {
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Surface(
-                                color = getDojgLevelColor(point.level),
-                                shape = RoundedCornerShape(4.dp)
-                            ) {
-                                Text(
-                                    text = point.level.take(1).uppercase(),
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = Color.White
-                                )
-                            }
-                            point.jlptLevel?.let { jlpt ->
-                                Surface(
-                                    color = Color(0xFF4CAF50),
-                                    shape = RoundedCornerShape(4.dp)
-                                ) {
-                                    Text(
-                                        text = jlpt,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = Color.White
-                                    )
-                                }
-                            }
+                        Surface(
+                            color = getDojgLevelColor(point.level),
+                            shape = RoundedCornerShape(4.dp)
+                        ) {
+                            Text(
+                                text = point.level.take(1).uppercase(),
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color.White
+                            )
                         }
                     }
                 )
@@ -951,6 +938,19 @@ private fun DojgSection(
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onTertiaryContainer
                         )
+                        point.headline?.takeIf { it != point.pattern }?.let { hl ->
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = hl,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.9f)
+                            )
+                        }
+                        if (point.resources.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            GrammarSourcePills(resources = point.resources)
+                        }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = point.meaning,
@@ -979,22 +979,9 @@ private fun DojgSection(
                             }
                         }
                         Spacer(modifier = Modifier.height(8.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            TextButton(
-                                onClick = { onOpenUrl(point.sourceUrl) },
-                                contentPadding = PaddingValues(0.dp)
-                            ) { Text("DOJG", color = Color(0xFF4CAF50)) }
-                            point.videoUrl?.let { url ->
-                                TextButton(
-                                    onClick = { onOpenUrl(url) },
-                                    contentPadding = PaddingValues(0.dp)
-                                ) { Text("▶ Video", color = Color(0xFFFF0000)) }
-                            }
-                            point.jlptsenseiUrl?.let { url ->
-                                TextButton(
-                                    onClick = { onOpenUrl(url) },
-                                    contentPadding = PaddingValues(0.dp)
-                                ) { Text("JLPTSensei", color = Color(0xFF2196F3)) }
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            point.resources.forEach { resource ->
+                                GrammarResourceTextButton(resource = resource, onOpenUrl = onOpenUrl)
                             }
                         }
                     }

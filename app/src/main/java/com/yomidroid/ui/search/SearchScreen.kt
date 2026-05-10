@@ -6,9 +6,11 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
@@ -23,6 +25,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -33,21 +36,26 @@ import com.yomidroid.grammar.GrammarLibrary
 import com.yomidroid.grammar.GrammarLibraryEntry
 import com.yomidroid.tts.TtsManager
 import com.yomidroid.ui.components.DictionaryEntryWebView
+import com.yomidroid.ui.components.GrammarResourceButton
+import com.yomidroid.ui.components.GrammarSourcePills
 import kotlinx.coroutines.delay
 
-private val JLPT_BG_COLORS = mapOf(
-    "N5" to Color(0x264CAF50),
-    "N4" to Color(0x268BC34A),
-    "N3" to Color(0x26FFB300),
-    "N2" to Color(0x26FF7043),
-    "N1" to Color(0x26F44336)
-)
-private val JLPT_FG_COLORS = mapOf(
-    "N5" to Color(0xFF4CAF50),
-    "N4" to Color(0xFF8BC34A),
-    "N3" to Color(0xFFFFB300),
-    "N2" to Color(0xFFFF7043),
-    "N1" to Color(0xFFF44336)
+private enum class SearchFilter(val label: String) {
+    All("All"),
+    Words("Words"),
+    Grammar("Grammar")
+}
+
+private data class GrammarSourceFilter(val key: String?, val label: String)
+
+private val GRAMMAR_SOURCE_FILTERS = listOf(
+    GrammarSourceFilter(null, "All"),
+    GrammarSourceFilter("gamegengo", "GameGengo"),
+    GrammarSourceFilter("dojg", "DOJG"),
+    GrammarSourceFilter("hjg", "HJG"),
+    GrammarSourceFilter("donnatoki", "文型辞典"),
+    GrammarSourceFilter("taekim", "Tae Kim"),
+    GrammarSourceFilter("imabi", "Imabi"),
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -62,6 +70,8 @@ fun SearchScreen() {
     var dictResults by remember { mutableStateOf<List<DictionaryEntry>>(emptyList()) }
     var grammarResults by remember { mutableStateOf<List<GrammarLibraryEntry>>(emptyList()) }
     var isSearching by remember { mutableStateOf(false) }
+    var filter by remember { mutableStateOf(SearchFilter.All) }
+    var grammarSourceFilter by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(query) {
         if (query.isBlank()) {
@@ -87,7 +97,7 @@ fun SearchScreen() {
                 value = query,
                 onValueChange = { query = it },
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                placeholder = { Text("Japanese word, phrase, or grammar pattern…") },
+                placeholder = { Text("Japanese, romaji, or English meaning…") },
                 singleLine = true,
                 leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search") },
                 trailingIcon = {
@@ -103,6 +113,62 @@ fun SearchScreen() {
                 }
             )
 
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                SearchFilter.values().forEach { option ->
+                    val count = when (option) {
+                        SearchFilter.All -> dictResults.size + grammarResults.size
+                        SearchFilter.Words -> dictResults.size
+                        SearchFilter.Grammar -> grammarResults.size
+                    }
+                    val showCount = query.isNotBlank() && !isSearching
+                    FilterChip(
+                        selected = filter == option,
+                        onClick = {
+                            filter = option
+                            if (option != SearchFilter.Grammar) grammarSourceFilter = null
+                        },
+                        label = {
+                            Text(if (showCount) "${option.label} ($count)" else option.label)
+                        }
+                    )
+                }
+            }
+
+            // Source sub-filter — only visible when Grammar filter is active
+            AnimatedVisibility(visible = filter == SearchFilter.Grammar) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    GRAMMAR_SOURCE_FILTERS.forEach { opt ->
+                        val matchingCount = if (opt.key == null) {
+                            grammarResults.size
+                        } else {
+                            grammarResults.count { entry -> entry.resources.any { it.source == opt.key } }
+                        }
+                        val showCount = query.isNotBlank() && !isSearching
+                        // Skip sources with zero matches to keep the row tidy
+                        if (opt.key != null && matchingCount == 0 && showCount) return@forEach
+                        FilterChip(
+                            selected = grammarSourceFilter == opt.key,
+                            onClick = { grammarSourceFilter = opt.key },
+                            label = {
+                                Text(if (showCount) "${opt.label} ($matchingCount)" else opt.label)
+                            }
+                        )
+                    }
+                }
+            }
+
             if (query.isBlank()) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
@@ -115,51 +181,69 @@ fun SearchScreen() {
                         modifier = Modifier.padding(32.dp)
                     )
                 }
-            } else if (!isSearching && dictResults.isEmpty() && grammarResults.isEmpty()) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "No results in dictionary or grammar library",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
             } else {
-                LazyColumn(
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    if (dictResults.isNotEmpty()) {
-                        item(key = "dict-header") {
-                            Text(
-                                text = "DICTIONARY (${dictResults.size})",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                        items(dictResults, key = { "dict_${it.id}_${it.source}" }) { entry ->
-                            DictResultCard(entry = entry, ttsManager = ttsManager)
-                        }
+                val showWords = filter == SearchFilter.All || filter == SearchFilter.Words
+                val showGrammar = filter == SearchFilter.All || filter == SearchFilter.Grammar
+                val visibleWords = if (showWords) dictResults else emptyList()
+                val visibleGrammar = when {
+                    !showGrammar -> emptyList()
+                    grammarSourceFilter == null -> grammarResults
+                    else -> grammarResults.filter { entry ->
+                        entry.resources.any { it.source == grammarSourceFilter }
                     }
+                }
 
-                    if (grammarResults.isNotEmpty()) {
-                        item(key = "grammar-header") {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                text = "GRAMMAR (${grammarResults.size})",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.primary
-                            )
+                if (!isSearching && visibleWords.isEmpty() && visibleGrammar.isEmpty()) {
+                    val emptyMessage = when (filter) {
+                        SearchFilter.Words -> "No word results"
+                        SearchFilter.Grammar -> "No grammar results"
+                        SearchFilter.All -> "No results in dictionary or grammar library"
+                    }
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = emptyMessage,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                } else {
+                    LazyColumn(
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (visibleWords.isNotEmpty()) {
+                            item(key = "dict-header") {
+                                Text(
+                                    text = "WORDS (${visibleWords.size})",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                            items(visibleWords, key = { "dict_${it.id}_${it.source}" }) { entry ->
+                                DictResultCard(entry = entry, ttsManager = ttsManager)
+                            }
                         }
-                        items(grammarResults, key = { "grammar_${it.id}" }) { entry ->
-                            GrammarResultCard(
-                                entry = entry,
-                                onOpenUrl = { url ->
-                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                                }
-                            )
+
+                        if (visibleGrammar.isNotEmpty()) {
+                            item(key = "grammar-header") {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = "GRAMMAR (${visibleGrammar.size})",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                            items(visibleGrammar, key = { "grammar_${it.id}" }) { entry ->
+                                GrammarResultCard(
+                                    entry = entry,
+                                    onOpenUrl = { url ->
+                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                                    }
+                                )
+                            }
                         }
                     }
                 }
@@ -259,8 +343,6 @@ private fun GrammarResultCard(
     onOpenUrl: (String) -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
-    val levelFg = JLPT_FG_COLORS[entry.jlptLevel] ?: Color.Gray
-    val levelBg = JLPT_BG_COLORS[entry.jlptLevel] ?: Color(0x269E9E9E)
 
     Card(
         modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded },
@@ -273,15 +355,6 @@ private fun GrammarResultCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Surface(color = levelBg, shape = RoundedCornerShape(4.dp)) {
-                    Text(
-                        text = entry.jlptLevel,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = levelFg
-                    )
-                }
                 Text(
                     text = entry.pattern,
                     style = MaterialTheme.typography.titleMedium,
@@ -296,7 +369,22 @@ private fun GrammarResultCard(
                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            if (entry.meaning != null) {
+            entry.headline?.takeIf { it != entry.pattern }?.let { hl ->
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = hl,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontStyle = FontStyle.Italic,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = if (expanded) Int.MAX_VALUE else 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            if (entry.resources.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(4.dp))
+                GrammarSourcePills(resources = entry.resources)
+            }
+            if (entry.meaning != null && entry.meaning != entry.headline) {
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = entry.meaning,
@@ -316,39 +404,8 @@ private fun GrammarResultCard(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     HorizontalDivider()
-                    if (entry.videoUrl != null) {
-                        OutlinedButton(
-                            onClick = { onOpenUrl(entry.videoUrl) },
-                            modifier = Modifier.fillMaxWidth(),
-                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.PlayArrow,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp),
-                                tint = Color(0xFFFF0000)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Watch GameGengo Video", fontSize = 13.sp)
-                        }
-                    }
-                    if (entry.jlptsenseiUrl != null) {
-                        OutlinedButton(
-                            onClick = { onOpenUrl(entry.jlptsenseiUrl) },
-                            modifier = Modifier.fillMaxWidth(),
-                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
-                        ) {
-                            Text("View on JLPTSensei", fontSize = 13.sp)
-                        }
-                    }
-                    if (entry.dojgUrl != null) {
-                        OutlinedButton(
-                            onClick = { onOpenUrl(entry.dojgUrl) },
-                            modifier = Modifier.fillMaxWidth(),
-                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
-                        ) {
-                            Text("Open DOJG Reference", fontSize = 13.sp)
-                        }
+                    entry.resources.forEach { resource ->
+                        GrammarResourceButton(resource = resource, onOpenUrl = onOpenUrl)
                     }
                 }
             }

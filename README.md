@@ -21,10 +21,10 @@ The app organizes around five tabs in the bottom nav:
 
 - **Now** — the current scan workspace. Three sub-tabs over a shared editable sentence:
 - **Lookup** (decoupled mode only) — dictionary entries from your last tap, mirrored from the overlay.
-- **Parse** — Kuromoji morphology, bunsetsu chips, DOJG grammar matches with GameGengo / JLPTSensei links.
+- **Parse** — Kuromoji morphology, bunsetsu chips, DOJG grammar matches with one-line English headlines, source tags, and link-outs to GameGengo, Tae Kim, Imabi, HJG, and the Japanese Expression Pattern Dictionary.
 - **Translate** — Natural / Literal / Leipzig gloss, powered by Gemini Flash with on-device Kuromoji as the offline fallback.
-- **Search** — universal search. Type any Japanese (a word, a conjugated form, a grammar pattern) and get dictionary entries + grammar library hits side-by-side.
-- **Library** — browse 428 JLPT N5–N1 grammar points with video and reference links.
+- **Search** — universal search. Type Japanese, romaji, or an English meaning ("rashii", "らしい", or "seems like" all surface the same entry). Filter to Words or Grammar; under Grammar, narrow further by source.
+- **Library** — browse ~2,800 grammar patterns aggregated from DOJG, HJG, Tae Kim, Imabi, the Japanese Expression Pattern Dictionary (文型辞典), and GameGengo. Filter chips per source, with short English headlines on every card.
 - **History** — every word lookup with screenshot, source app, time filters, Anki export per row.
 - **Settings** — permissions, modes, recognition, translation backend, Anki export, colors, hardware controls.
 
@@ -102,9 +102,12 @@ The app ships without bundled dictionaries. The in-app *Recommended* importer pu
 Any Yomitan-format `.zip` works via the manual import flow.
 
 ### Grammar Data
-- [GameGengo](https://www.youtube.com/@GameGengo) - JLPT grammar video timestamps
-- [JLPTSensei](https://jlptsensei.com) - Grammar definitions
-- DOJG references via [kenrick95/itazuraneko](https://github.com/kenrick95/itazuraneko)
+
+The grammar library is a unified index of ~2,800 patterns linking out to existing references. No copyrighted content is bundled — entries carry a Japanese pattern, a short English headline (where one can be extracted from the source page), and a link button per source.
+
+- [GameGengo](https://www.youtube.com/@GameGengo) — JLPT grammar video timestamps
+- [kenrick95/itazuraneko](https://github.com/kenrick95/itazuraneko) — local mirror of the master cross-reference (DOJG, Tae Kim, Imabi, the Pattern Dictionary 文型辞典) is the primary source of headlines and link targets
+- [Handbook of Japanese Grammar Patterns (HJG)](https://core6000.neocities.org/hjgp/) — original site is offline; HJG link-outs are rewritten to Internet Archive Wayback snapshots
 
 ### Core Libraries
 - [Yomitan](https://github.com/yomitan/yomitan) - Deinflection algorithm (GPL-3.0)
