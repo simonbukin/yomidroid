@@ -17,63 +17,52 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.yomidroid.grammar.GrammarLibrary
 import com.yomidroid.grammar.GrammarLibraryEntry
+import com.yomidroid.ui.components.GrammarResourceButton
+import com.yomidroid.ui.components.GrammarSourcePills
 
-private val JLPT_COLORS = mapOf(
-    "N5" to Color(0xFF4CAF50),
-    "N4" to Color(0xFF8BC34A),
-    "N3" to Color(0xFFFFB300),
-    "N2" to Color(0xFFFF7043),
-    "N1" to Color(0xFFF44336)
-)
-private val DEFAULT_LEVEL_COLOR = Color(0xFF9E9E9E)
+private data class SourceOption(val key: String?, val label: String) {
+    companion object {
+        val ALL = SourceOption(null, "All")
+    }
+}
 
-private val SOURCE_COLORS = mapOf(
-    "gamegengo" to Color(0xFFFF0000),
-    "jlptsensei" to Color(0xFF2196F3),
-    "dojg" to Color(0xFF4CAF50)
+private val SOURCE_OPTIONS = listOf(
+    SourceOption.ALL,
+    SourceOption("gamegengo", "GameGengo"),
+    SourceOption("dojg", "DOJG"),
+    SourceOption("hjg", "HJG"),
+    SourceOption("donnatoki", "文型辞典"),
+    SourceOption("taekim", "Tae Kim"),
+    SourceOption("imabi", "Imabi"),
 )
-private val SOURCE_LABELS = mapOf(
-    "gamegengo" to "GG",
-    "jlptsensei" to "JS",
-    "dojg" to "DOJG"
-)
-private val SOURCE_BG_COLORS = mapOf(
-    "gamegengo" to Color(0x26FF0000),
-    "jlptsensei" to Color(0x262196F3),
-    "dojg" to Color(0x264CAF50)
-)
-private val JLPT_BG_COLORS = mapOf(
-    "N5" to Color(0x264CAF50),
-    "N4" to Color(0x268BC34A),
-    "N3" to Color(0x26FFB300),
-    "N2" to Color(0x26FF7043),
-    "N1" to Color(0x26F44336)
-)
-private val DEFAULT_BG_COLOR = Color(0x269E9E9E)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LibraryScreen() {
     val context = LocalContext.current
     val library = remember { GrammarLibrary.getInstance(context) }
-    val availableLevels = remember { library.getAvailableLevels() }
 
-    var selectedLevel by remember { mutableStateOf<String?>(null) }
+    var selectedSource by remember { mutableStateOf<String?>(null) }
     var grammarPoints by remember { mutableStateOf<List<GrammarLibraryEntry>>(emptyList()) }
     var expandedCardId by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(selectedLevel) {
-        grammarPoints = library.getGrammarPoints(selectedLevel)
+    LaunchedEffect(selectedSource) {
+        grammarPoints = if (selectedSource == null) {
+            library.getGrammarPoints()
+        } else {
+            library.getGrammarPointsBySource(selectedSource!!)
+        }
     }
 
     val totalCount = remember { library.getTotalCount() }
-    val countByLevel = remember { library.getCountByLevel() }
+    val countBySource = remember { library.getCountBySource() }
 
     val openUrl = remember(context) {
         { url: String ->
@@ -92,7 +81,7 @@ fun LibraryScreen() {
             item(key = "filters") {
                 Column {
                     Text(
-                        text = "JLPT LEVEL",
+                        text = "SOURCE",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.primary
                     )
@@ -101,27 +90,16 @@ fun LibraryScreen() {
                         modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        FilterChip(
-                            selected = selectedLevel == null,
-                            onClick = { selectedLevel = null },
-                            label = { Text("All ($totalCount)") }
-                        )
-                        availableLevels.forEach { level ->
-                            val count = countByLevel[level] ?: 0
-                            val levelColor = JLPT_COLORS[level] ?: DEFAULT_LEVEL_COLOR
+                        SOURCE_OPTIONS.forEach { option ->
+                            val count = when (option.key) {
+                                null -> totalCount
+                                else -> countBySource[option.key] ?: 0
+                            }
+                            if (option.key != null && count == 0) return@forEach
                             FilterChip(
-                                selected = selectedLevel == level,
-                                onClick = {
-                                    selectedLevel = if (selectedLevel == level) null else level
-                                },
-                                label = { Text("$level ($count)") },
-                                leadingIcon = {
-                                    Surface(
-                                        color = levelColor,
-                                        shape = RoundedCornerShape(4.dp),
-                                        modifier = Modifier.size(8.dp)
-                                    ) {}
-                                }
+                                selected = selectedSource == option.key,
+                                onClick = { selectedSource = option.key },
+                                label = { Text("${option.label} ($count)") }
                             )
                         }
                     }
@@ -129,12 +107,9 @@ fun LibraryScreen() {
             }
 
             item(key = "header") {
+                val label = SOURCE_OPTIONS.firstOrNull { it.key == selectedSource }?.label ?: "All"
                 Text(
-                    text = if (selectedLevel != null) {
-                        "$selectedLevel GRAMMAR (${grammarPoints.size})"
-                    } else {
-                        "ALL GRAMMAR (${grammarPoints.size})"
-                    },
+                    text = "$label (${grammarPoints.size})",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.primary
                 )
@@ -206,9 +181,6 @@ private fun GrammarBrowseCard(
     onToggleExpand: () -> Unit,
     onOpenUrl: (String) -> Unit
 ) {
-    val levelColor = JLPT_COLORS[entry.jlptLevel] ?: DEFAULT_LEVEL_COLOR
-    val levelBgColor = JLPT_BG_COLORS[entry.jlptLevel] ?: DEFAULT_BG_COLOR
-
     Card(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onToggleExpand),
         colors = CardDefaults.cardColors(
@@ -216,44 +188,32 @@ private fun GrammarBrowseCard(
         )
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Surface(color = levelBgColor, shape = RoundedCornerShape(4.dp)) {
-                        Text(
-                            text = entry.jlptLevel,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = levelColor
-                        )
-                    }
-                    Text(
-                        text = entry.pattern,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    if (entry.gamegengoSource != null) SourceBadge("gamegengo")
-                    if (entry.jlptsenseiSource != null) SourceBadge("jlptsensei")
-                    if (entry.dojgSource != null) SourceBadge("dojg")
-                }
+            Text(
+                text = entry.pattern,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            entry.headline?.takeIf { it != entry.pattern }?.let { hl ->
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = hl,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontStyle = FontStyle.Italic,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = if (isExpanded) Int.MAX_VALUE else 2,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
 
-            if (entry.meaning != null) {
+            if (entry.resources.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(4.dp))
+                GrammarSourcePills(resources = entry.resources)
+            }
+
+            if (entry.meaning != null && entry.meaning != entry.headline) {
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = entry.meaning,
@@ -275,59 +235,11 @@ private fun GrammarBrowseCard(
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary
                     )
-                    if (entry.videoUrl != null) {
-                        OutlinedButton(
-                            onClick = { onOpenUrl(entry.videoUrl) },
-                            modifier = Modifier.fillMaxWidth(),
-                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.PlayArrow,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp),
-                                tint = Color(0xFFFF0000)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Watch GameGengo Video")
-                        }
-                    }
-                    if (entry.jlptsenseiUrl != null) {
-                        OutlinedButton(
-                            onClick = { onOpenUrl(entry.jlptsenseiUrl) },
-                            modifier = Modifier.fillMaxWidth(),
-                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
-                        ) {
-                            Text("View on JLPTSensei")
-                        }
-                    }
-                    if (entry.dojgUrl != null) {
-                        OutlinedButton(
-                            onClick = { onOpenUrl(entry.dojgUrl) },
-                            modifier = Modifier.fillMaxWidth(),
-                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
-                        ) {
-                            Text("Open DOJG Reference")
-                        }
+                    entry.resources.forEach { resource ->
+                        GrammarResourceButton(resource = resource, onOpenUrl = onOpenUrl)
                     }
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun SourceBadge(sourceName: String) {
-    val color = SOURCE_COLORS[sourceName] ?: Color.Gray
-    val bgColor = SOURCE_BG_COLORS[sourceName] ?: DEFAULT_BG_COLOR
-    val label = SOURCE_LABELS[sourceName] ?: "?"
-    Surface(color = bgColor, shape = RoundedCornerShape(4.dp)) {
-        Text(
-            text = label,
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-            style = MaterialTheme.typography.labelSmall,
-            fontWeight = FontWeight.Bold,
-            color = color,
-            fontSize = 10.sp
-        )
     }
 }

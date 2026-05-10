@@ -49,6 +49,15 @@ class GrammarResolver private constructor(context: Context) {
 
         val results = detected.map { point ->
             val libraryEntry = findLibraryMatch(point.pattern)
+            // Resources: library entry's resources first, plus the DOJG sourceUrl as a fallback
+            // so the user always has at least one external reference to open.
+            val resources = libraryEntry?.resources.orEmpty().let { libResources ->
+                if (libResources.any { it.url == point.sourceUrl }) {
+                    libResources
+                } else {
+                    libResources + GrammarResource("dojg", point.pattern, point.sourceUrl)
+                }
+            }
             ResolvedGrammarPoint(
                 pattern = point.pattern,
                 level = point.level,
@@ -59,10 +68,10 @@ class GrammarResolver private constructor(context: Context) {
                 startIndex = point.startIndex,
                 endIndex = point.endIndex,
                 sourceUrl = point.sourceUrl,
-                jlptLevel = libraryEntry?.jlptLevel,
                 videoUrl = libraryEntry?.videoUrl,
-                jlptsenseiUrl = libraryEntry?.jlptsenseiUrl,
-                libraryMeaning = libraryEntry?.meaning
+                libraryMeaning = libraryEntry?.meaning,
+                headline = libraryEntry?.headline,
+                resources = resources
             )
         }
 
@@ -93,9 +102,8 @@ class GrammarResolver private constructor(context: Context) {
         return candidates.maxByOrNull { entry ->
             var score = 0
             if (entry.hasVideo) score += 4
-            if (entry.jlptsenseiUrl != null) score += 2
-            if (entry.dojgUrl != null) score += 1
-            score
+            if (entry.dojgUrl != null) score += 2
+            score + entry.resources.size  // any additional sources (taekim/imabi/hjg/etc.)
         }
     }
 }

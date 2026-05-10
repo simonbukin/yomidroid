@@ -6,6 +6,7 @@ import androidx.compose.runtime.Immutable
 import com.google.gson.Gson
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.text.Normalizer
 
 /**
  * GameGengo video information for each JLPT level.
@@ -18,15 +19,30 @@ data class GameGengoVideo(
 )
 
 /**
- * A source for a grammar point (GameGengo, JLPTSensei, or DOJG).
+ * A source for a grammar point (GameGengo or DOJG).
  */
 @Immutable
 data class GrammarSource(
-    val name: String,           // "gamegengo", "jlptsensei", "dojg"
+    val name: String,           // "gamegengo" or "dojg"
     val timestamp: String? = null,       // For GameGengo: "1:23:45"
     val timestampSeconds: Int? = null,   // For GameGengo: computed seconds
-    val meaning: String? = null,         // For JLPTSensei
+    val meaning: String? = null,         // Legacy field; unused — kept for JSON backwards-compat
     val url: String? = null              // For DOJG
+)
+
+/**
+ * A single external reference (video / textbook page / encyclopedia entry)
+ * attached to a grammar point. Generic across sources so adding a new one
+ * doesn't require new fields on GrammarLibraryEntry.
+ */
+@Immutable
+data class GrammarResource(
+    val source: String,                 // "gamegengo", "dojg", "donnatoki", "taekim", "imabi", "hjg", "masterref"
+    val title: String,                  // Human-readable label (often == pattern)
+    val url: String,
+    val timestampSeconds: Int? = null,  // Only meaningful for video sources
+    val headline: String? = null,       // Short English gloss as extracted from this source (when available)
+    val localAssetPath: String? = null  // Relative path under itazuraneko mirror; reserved for future offline bundling
 )
 
 /**
@@ -38,20 +54,28 @@ data class GrammarSource(
 data class GrammarLibraryEntry(
     val id: String,
     val pattern: String,
-    val jlptLevel: String,
+    /**
+     * Internal-only: used to look up which GameGengo video timestamp this pattern belongs to.
+     * Not rendered in the UI — the user-facing surface treats all grammar entries as level-less.
+     */
+    val jlptLevel: String?,
     val meaning: String? = null,
     // Pre-computed source references (avoid .find() during composition)
     val gamegengoSource: GrammarSource? = null,
-    val jlptsenseiSource: GrammarSource? = null,
     val dojgSource: GrammarSource? = null,
-    // Pre-computed flags and URLs
+    // Pre-computed flags and URLs (back-compat with callers; also reflected in `resources`)
     val hasVideo: Boolean = false,
-    val videoUrl: String? = null,       // Pre-computed YouTube URL
-    val dojgUrl: String? = null,        // Direct reference
-    val jlptsenseiUrl: String? = null,  // JLPTSensei grammar page
+    val videoUrl: String? = null,
+    val dojgUrl: String? = null,
+    // Generic resource list — render buttons by iterating this in UI
+    val resources: List<GrammarResource> = emptyList(),
+    // Short English gloss shown in cards. Picked by source priority at load time.
+    val headline: String? = null,
     // Pre-computed for fast search
     val patternLower: String = pattern.lowercase(),
-    val meaningLower: String? = meaning?.lowercase()
+    val patternRomaji: String = Romaji.kanaToRomaji(pattern),
+    val meaningLower: String? = meaning?.lowercase(),
+    val headlineLower: String? = headline?.lowercase()
 )
 
 /**
@@ -88,8 +112,31 @@ private data class GrammarPointJson(
     val pattern: String,
     val jlptLevel: String,
     val meaning: String? = null,
-    val sources: List<SourceJson>? = null,
-    val jlptsenseiUrl: String? = null
+    val sources: List<SourceJson>? = null
+)
+
+/**
+ * JSON shape for app/src/main/assets/external-grammar/itazuraneko-index.json
+ * (produced by scripts/grammar-ingest/scrape_itazuraneko.py).
+ */
+private data class ItazuranekoIndexJson(
+    val version: Int,
+    val fetched_at: String?,
+    val entries: List<ItazuranekoEntryJson>
+)
+
+private data class ItazuranekoEntryJson(
+    val pattern: String,
+    val headline: String? = null,
+    val sources: List<ItazuranekoSourceJson>
+)
+
+private data class ItazuranekoSourceJson(
+    val source: String,
+    val title: String,
+    val url: String,
+    val headline: String? = null,
+    val localPath: String? = null
 )
 
 /**
@@ -105,6 +152,34 @@ class GrammarLibrary private constructor(context: Context) {
     companion object {
         private const val TAG = "GrammarLibrary"
         private const val ASSET_PATH = "gamegengo-grammar.json"
+        private const val EXTERNAL_INDEX_PATH = "external-grammar/itazuraneko-index.json"
+
+        // Preferred ordering for resource buttons in UI
+        private val SOURCE_PRIORITY = mapOf(
+            "gamegengo" to 0,
+            "dojg" to 1,
+            "donnatoki" to 2,
+            "taekim" to 3,
+            "imabi" to 4,
+            "hjg" to 5,
+            "masterref" to 6,
+        )
+
+        private val LEVEL_PREFIX_REGEX = Regex("^[㊞㊤㊥]\\s*")  // ㊞㊤㊥ — DOJG level markers
+        private val DISAMBIG_SUFFIX_REGEX = Regex("\\(\\s*\\d+\\s*\\)\\s*$")
+        private val WHITESPACE_REGEX = Regex("\\s+")
+
+        /**
+         * Normalize a grammar pattern string for cross-source deduplication.
+         * Mirrors scripts/grammar-ingest/scrape_itazuraneko.py:normalize_pattern_key.
+         */
+        fun normalizePatternKey(s: String): String {
+            var out = Normalizer.normalize(s, Normalizer.Form.NFKC)
+            out = LEVEL_PREFIX_REGEX.replace(out, "")
+            out = DISAMBIG_SUFFIX_REGEX.replace(out, "")
+            out = WHITESPACE_REGEX.replace(out, "")
+            return out.trim()
+        }
 
         @Volatile
         private var instance: GrammarLibrary? = null
@@ -164,9 +239,6 @@ class GrammarLibrary private constructor(context: Context) {
                 val ggSource = sourcesList.find { it.name == "gamegengo" }?.let {
                     GrammarSource(it.name, it.timestamp, it.timestampSeconds, it.meaning, it.url)
                 }
-                val jsSource = sourcesList.find { it.name == "jlptsensei" }?.let {
-                    GrammarSource(it.name, it.timestamp, it.timestampSeconds, it.meaning, it.url)
-                }
                 val dojgSource = sourcesList.find { it.name == "dojg" }?.let {
                     GrammarSource(it.name, it.timestamp, it.timestampSeconds, it.meaning, it.url)
                 }
@@ -177,27 +249,50 @@ class GrammarLibrary private constructor(context: Context) {
                     "https://www.youtube.com/watch?v=$videoId&t=${ggSource.timestampSeconds}s"
                 } else null
 
+                // Build generic resources list — used for rendering buttons in UI.
+                val resources = buildList {
+                    if (videoUrl != null) {
+                        add(GrammarResource(
+                            source = "gamegengo",
+                            title = videos[point.jlptLevel]?.title ?: "GameGengo Video",
+                            url = videoUrl,
+                            timestampSeconds = ggSource?.timestampSeconds
+                        ))
+                    }
+                    if (dojgSource?.url != null) {
+                        add(GrammarResource("dojg", point.pattern, dojgSource.url))
+                    }
+                }
+
                 GrammarLibraryEntry(
                     id = point.id,
                     pattern = point.pattern,
                     jlptLevel = point.jlptLevel,
                     meaning = point.meaning,
                     gamegengoSource = ggSource,
-                    jlptsenseiSource = jsSource,
                     dojgSource = dojgSource,
                     hasVideo = videoUrl != null,
                     videoUrl = videoUrl,
                     dojgUrl = dojgSource?.url,
-                    jlptsenseiUrl = point.jlptsenseiUrl,
+                    resources = resources,
+                    headline = null,  // populated from itazuraneko index if a match exists
                     patternLower = point.pattern.lowercase(),
-                    meaningLower = point.meaning?.lowercase()
+                    patternRomaji = Romaji.kanaToRomaji(point.pattern),
+                    meaningLower = point.meaning?.lowercase(),
+                    headlineLower = null
                 )
             }
 
-            // Pre-index by level for faster filtering
-            grammarByLevel = grammarPoints.groupBy { it.jlptLevel }
+            // Merge in external itazuraneko-aggregated index (Tae Kim, Imabi, DOJG, HJG, donnatoki).
+            val baseCount = grammarPoints.size
+            grammarPoints = mergeExternalIndex(context, grammarPoints)
 
-            Log.d(TAG, "Loaded ${grammarPoints.size} grammar points from library")
+            // Pre-index by level for faster filtering (only JLPT-tagged entries appear here)
+            grammarByLevel = grammarPoints
+                .filter { it.jlptLevel != null }
+                .groupBy { it.jlptLevel!! }
+
+            Log.d(TAG, "Loaded ${grammarPoints.size} grammar points (base=$baseCount, +${grammarPoints.size - baseCount} from itazuraneko index)")
             isLoaded = true
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load grammar library: ${e.message}")
@@ -206,6 +301,109 @@ class GrammarLibrary private constructor(context: Context) {
             grammarByLevel = emptyMap()
             isLoaded = false
         }
+    }
+
+    /**
+     * Merge external itazuraneko-sourced patterns into the base library.
+     * Returns the combined list. Behavior:
+     *   - For each external entry, find a base entry with the same normalized pattern key.
+     *   - If found: append the external sources to the base entry's `resources` (dedup by url).
+     *   - If not found: create a new entry with `jlptLevel = null` and `meaning = null`.
+     * Existing base entries with no external match are kept unchanged.
+     */
+    private fun mergeExternalIndex(
+        context: Context,
+        base: List<GrammarLibraryEntry>
+    ): List<GrammarLibraryEntry> {
+        val external = try {
+            context.assets.open(EXTERNAL_INDEX_PATH)
+                .bufferedReader()
+                .use { it.readText() }
+                .let { gson.fromJson(it, ItazuranekoIndexJson::class.java) }
+        } catch (e: Exception) {
+            Log.w(TAG, "External grammar index not available: ${e.message}")
+            return base
+        }
+
+        // Build base index by normalized pattern key.
+        val byKey: MutableMap<String, GrammarLibraryEntry> = mutableMapOf()
+        val baseAsMutable: MutableList<GrammarLibraryEntry> = base.toMutableList()
+        base.forEachIndexed { idx, entry ->
+            val key = normalizePatternKey(entry.pattern)
+            // First occurrence wins; later duplicates fall through (rare for the curated base set).
+            byKey.putIfAbsent(key, entry)
+        }
+
+        val addedEntries = mutableListOf<GrammarLibraryEntry>()
+        var nextSyntheticId = 0
+
+        external.entries.forEach { ext ->
+            val key = normalizePatternKey(ext.pattern)
+            if (key.isEmpty()) return@forEach
+
+            val mapped = ext.sources.map { s ->
+                GrammarResource(
+                    source = s.source,
+                    title = s.title,
+                    url = s.url,
+                    headline = s.headline,
+                    localAssetPath = s.localPath
+                )
+            }
+            val existing = byKey[key]
+            if (existing != null) {
+                // Merge into existing entry: append new (source,url) pairs; fill in headline if missing.
+                val seen = existing.resources.map { it.source to it.url }.toMutableSet()
+                val merged = existing.resources.toMutableList()
+                for (r in mapped) {
+                    val k = r.source to r.url
+                    if (k !in seen) {
+                        merged.add(r)
+                        seen.add(k)
+                    }
+                }
+                val sorted = merged.sortedBy { SOURCE_PRIORITY[it.source] ?: 99 }
+                val newHeadline = existing.headline ?: ext.headline ?: pickDisplayHeadline(sorted)
+                val replaced = existing.copy(
+                    resources = sorted,
+                    headline = newHeadline,
+                    headlineLower = newHeadline?.lowercase()
+                )
+                byKey[key] = replaced
+                val idx = baseAsMutable.indexOf(existing)
+                if (idx >= 0) baseAsMutable[idx] = replaced
+            } else {
+                // New synthetic entry (no JLPT level)
+                val sorted = mapped.sortedBy { SOURCE_PRIORITY[it.source] ?: 99 }
+                val headline = ext.headline ?: pickDisplayHeadline(sorted)
+                val newEntry = GrammarLibraryEntry(
+                    id = "itz-${"%05d".format(nextSyntheticId++)}",
+                    pattern = ext.pattern,
+                    jlptLevel = null,
+                    meaning = null,
+                    resources = sorted,
+                    headline = headline,
+                    patternLower = ext.pattern.lowercase(),
+                    patternRomaji = Romaji.kanaToRomaji(ext.pattern),
+                    meaningLower = null,
+                    headlineLower = headline?.lowercase()
+                )
+                byKey[key] = newEntry
+                addedEntries.add(newEntry)
+            }
+        }
+
+        return baseAsMutable + addedEntries
+    }
+
+    /** Pick display headline from a sorted list of resources by source priority. */
+    private fun pickDisplayHeadline(resources: List<GrammarResource>): String? {
+        // resources are already sorted by SOURCE_PRIORITY; first one with a non-empty headline wins
+        for (r in resources) {
+            val h = r.headline
+            if (!h.isNullOrBlank()) return h
+        }
+        return null
     }
 
     /**
@@ -234,19 +432,89 @@ class GrammarLibrary private constructor(context: Context) {
     }
 
     /**
+     * Get grammar points that have at least one resource from the given source.
+     * Used by the Library screen's source filter chips.
+     */
+    fun getGrammarPointsBySource(source: String): List<GrammarLibraryEntry> {
+        return grammarPoints.filter { entry ->
+            entry.resources.any { it.source == source }
+        }
+    }
+
+    /**
+     * Count of grammar points per resource source (across all entries).
+     * One entry may be counted in multiple sources if it has multiple resources.
+     */
+    fun getCountBySource(): Map<String, Int> {
+        val counts = mutableMapOf<String, Int>()
+        for (entry in grammarPoints) {
+            val seen = mutableSetOf<String>()
+            for (r in entry.resources) {
+                if (seen.add(r.source)) {
+                    counts[r.source] = (counts[r.source] ?: 0) + 1
+                }
+            }
+        }
+        return counts
+    }
+
+    /**
      * Search grammar points by pattern or meaning.
      * Uses pre-computed lowercase fields for performance.
+     */
+    /**
+     * Multi-field grammar search. Matches against:
+     *   - Japanese pattern (entry.patternLower)
+     *   - Hepburn romaji of pattern (entry.patternRomaji)
+     *   - Display headline (entry.headlineLower)
+     *   - Optional meaning (entry.meaningLower)
+     *   - Each per-source headline on entry.resources (so e.g. a donnatoki headline
+     *     surfaces even when the picked display headline came from DOJG)
+     *
+     * Results are sorted by which field matched, then alphabetically by pattern.
+     * Field priority: pattern > romaji > headline > meaning > resource-headline.
      */
     suspend fun search(query: String): List<GrammarLibraryEntry> = withContext(Dispatchers.Default) {
         if (query.isBlank()) return@withContext emptyList()
 
-        val q = query.lowercase()
+        val q = query.lowercase().trim()
         grammarPoints.asSequence()
-            .filter { entry ->
-                entry.patternLower.contains(q) || entry.meaningLower?.contains(q) == true
+            .mapNotNull { entry ->
+                val rank = matchRank(entry, q) ?: return@mapNotNull null
+                Pair(rank, entry)
             }
+            .sortedWith(compareBy({ it.first }, { it.second.patternLower }))
+            .map { it.second }
             .take(50)
             .toList()
+    }
+
+    /** Returns a small integer rank (lower = better) for an entry matching `q`, or null. */
+    private fun matchRank(entry: GrammarLibraryEntry, q: String): Int? {
+        // Field-priority ranks. Within a field: exact match < startsWith < contains.
+        val pl = entry.patternLower
+        if (pl == q) return 0
+        if (pl.startsWith(q)) return 1
+        val pr = entry.patternRomaji
+        if (pr == q) return 2
+        if (pr.startsWith(q)) return 3
+        if (pl.contains(q)) return 4
+        if (pr.contains(q)) return 5
+        val hl = entry.headlineLower
+        if (hl != null) {
+            if (hl == q) return 6
+            if (hl.startsWith(q)) return 7
+            if (hl.contains(q)) return 8
+        }
+        val ml = entry.meaningLower
+        if (ml != null && ml.contains(q)) return 9
+        // Per-source headline / resource title fallback
+        for (r in entry.resources) {
+            val rh = r.headline
+            if (rh != null && rh.contains(q, ignoreCase = true)) return 10
+            if (r.title.contains(q, ignoreCase = true)) return 11
+        }
+        return null
     }
 
     /**

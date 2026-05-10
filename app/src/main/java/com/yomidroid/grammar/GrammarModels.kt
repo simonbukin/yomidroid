@@ -153,7 +153,7 @@ data class DojgExample(
 data class ResolvedGrammarPoint(
     // From DojgMatcher detection
     val pattern: String,
-    val level: String,               // "basic", "intermediate", "advanced"
+    val level: String,               // DOJG difficulty: "basic", "intermediate", "advanced"
     val meaning: String,
     val formation: List<String>,
     val examples: List<DojgExample>,
@@ -162,10 +162,11 @@ data class ResolvedGrammarPoint(
     val endIndex: Int,
     val sourceUrl: String,           // DOJG reference URL
     // From GrammarLibrary cross-reference (null if no match)
-    val jlptLevel: String?,          // "N5", "N4", etc.
     val videoUrl: String?,           // GameGengo YouTube with timestamp
-    val jlptsenseiUrl: String?,
-    val libraryMeaning: String?      // Often more concise than DOJG meaning
+    val libraryMeaning: String?,     // Often more concise than DOJG meaning
+    val headline: String? = null,    // Short English gloss (same shape used in Search/Library cards)
+    // Generic resource list from the matched library entry
+    val resources: List<GrammarResource> = emptyList()
 )
 
 /**
