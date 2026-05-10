@@ -318,6 +318,36 @@ fun InputSettingsScreen(onBack: () -> Unit) {
             )
 
             Spacer(modifier = Modifier.height(16.dp))
+
+            // Require explicit dismiss
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        saveAndApply(config.copy(requireExplicitDismiss = !config.requireExplicitDismiss))
+                    },
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Require explicit dismiss",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        text = "Tap-outside is ignored — only the on-screen X or the " +
+                            "DISMISS keybind closes the overlay. Prevents mistap-dismiss " +
+                            "during lookups.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = config.requireExplicitDismiss,
+                    onCheckedChange = { saveAndApply(config.copy(requireExplicitDismiss = it)) }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
         }
     }
 }

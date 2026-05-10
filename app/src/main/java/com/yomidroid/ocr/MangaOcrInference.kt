@@ -4,6 +4,7 @@ import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import android.graphics.Bitmap
+import android.os.SystemClock
 import android.util.Log
 import java.nio.FloatBuffer
 import java.nio.LongBuffer
@@ -11,16 +12,25 @@ import java.nio.LongBuffer
 /**
  * ONNX-based inference for manga-ocr (ViT encoder + BERT decoder).
  * Preprocesses cropped text region bitmaps and runs autoregressive decoding.
+ *
+ * [bilinearScaling] controls how the crop is resampled to 224×224. For inked
+ * print/manga, bilinear matches the model's training distribution. For pixel
+ * fonts (retro emulators), `false` (NEAREST) preserves the pixel grid that
+ * bilinear blurs into mush.
  */
 class MangaOcrInference(
     encoderPath: String,
     decoderPath: String,
-    vocabPath: String
+    vocabPath: String,
+    var bilinearScaling: Boolean = true
 ) {
     companion object {
         private const val TAG = "MangaOcrInference"
         private const val IMAGE_SIZE = 224
-        private const val MAX_TOKENS = 300
+        // Game/manga lines fit well under 64 tokens. Cap hallucinations from
+        // out-of-distribution input (was 300 — up to 300 sequential decoder
+        // steps with no KV cache).
+        private const val MAX_TOKENS = 64
     }
 
     private val env = OrtEnvironment.getEnvironment()
@@ -53,18 +63,22 @@ class MangaOcrInference(
         val inputTensor = preprocessImage(bitmap)
         var encoderOutput: OnnxTensor? = null
         try {
-            // Run encoder
+            val encStart = SystemClock.elapsedRealtime()
             val encoderResult = encoderSession.run(mapOf(encoderInputName to inputTensor))
             encoderOutput = encoderResult.get(encoderOutputName).get() as OnnxTensor
+            val encMs = SystemClock.elapsedRealtime() - encStart
 
-            // Autoregressive decoding
+            val decStart = SystemClock.elapsedRealtime()
             val tokenIds = mutableListOf(MangaOcrTokenizer.CLS_ID)
-
+            var steps = 0
             for (step in 0 until MAX_TOKENS) {
                 val nextToken = decoderStep(tokenIds, encoderOutput)
+                steps = step + 1
                 if (nextToken == MangaOcrTokenizer.SEP_ID) break
                 tokenIds.add(nextToken)
             }
+            val decMs = SystemClock.elapsedRealtime() - decStart
+            Log.d(TAG, "encoder ms=$encMs decoder ms=$decMs steps=$steps")
 
             return tokenizer.decode(tokenIds)
         } finally {
@@ -142,7 +156,7 @@ class MangaOcrInference(
         // ViTImageProcessor with int size=224 stretches to (224, 224) with PIL
         // BILINEAR — no aspect-preserving letterbox. Earlier letterbox attempt
         // was wrong; the model was trained on stretched square crops.
-        val scaled = Bitmap.createScaledBitmap(bitmap, IMAGE_SIZE, IMAGE_SIZE, true)
+        val scaled = Bitmap.createScaledBitmap(bitmap, IMAGE_SIZE, IMAGE_SIZE, bilinearScaling)
         val pixels = IntArray(IMAGE_SIZE * IMAGE_SIZE)
         scaled.getPixels(pixels, 0, IMAGE_SIZE, 0, 0, IMAGE_SIZE, IMAGE_SIZE)
         if (scaled !== bitmap) scaled.recycle()

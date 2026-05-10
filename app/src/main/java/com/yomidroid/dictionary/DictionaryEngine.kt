@@ -140,6 +140,46 @@ class DictionaryEngine(context: Context) {
     }
 
     /**
+     * Longest-match scan within [text]'s [start, end) substring, returning
+     * one [DictionaryWordMatch] per matched word with ALL candidate entries
+     * (same set the hover-cursor popup gets via [findTerms]).
+     *
+     * Used by the parse-tab to align dictionary lookups with Kuromoji's
+     * bunsetsu boundaries — call once per bunsetsu so each card surfaces
+     * every candidate for the matched word, not just the top one.
+     */
+    fun findAllMatchesGrouped(text: String, start: Int, end: Int): List<DictionaryWordMatch> {
+        val matches = mutableListOf<DictionaryWordMatch>()
+        val safeEnd = end.coerceAtMost(text.length)
+        var i = start.coerceAtLeast(0)
+        while (i < safeEnd) {
+            val ch = text[i]
+            if (ch.isWhitespace() || ch in "。、！？「」『』（）…・") {
+                i++
+                continue
+            }
+            val candidates = findTermsBlocking(text.substring(i, safeEnd))
+            val best = candidates.firstOrNull()
+            if (best != null && best.matchedText.isNotEmpty()) {
+                matches.add(
+                    DictionaryWordMatch(
+                        matchedText = best.matchedText,
+                        startIndex = i,
+                        candidates = candidates
+                    )
+                )
+                i += best.matchedText.length
+            } else {
+                i++
+            }
+        }
+        return matches
+    }
+
+    suspend fun findAllMatchesGroupedAsync(text: String, start: Int, end: Int): List<DictionaryWordMatch> =
+        withContext(Dispatchers.IO) { findAllMatchesGrouped(text, start, end) }
+
+    /**
      * Search for a term with deinflection but without progressive substring shortening.
      * Suitable for search box UI — looks up the full query and its deinflected forms only.
      */

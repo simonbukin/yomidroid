@@ -45,7 +45,13 @@ data class InputConfig(
     val bindings: Map<BindableAction, Int> = DEFAULT_BINDINGS,
     val cursorSpeed: Float = 8f,
     val cursorAcceleration: Boolean = true,
-    val scrollSpeed: Float = 60f
+    val scrollSpeed: Float = 60f,
+    /**
+     * When true, the overlay can only be dismissed via the hardware DISMISS
+     * keybind or the on-screen X handle. Tapping outside the text/popup is
+     * ignored. Prevents the scan → tap → mistap → dismiss → rescan loop.
+     */
+    val requireExplicitDismiss: Boolean = false
 ) {
     companion object {
         val DEFAULT_BINDINGS: Map<BindableAction, Int> = mapOf(
@@ -91,6 +97,7 @@ class InputConfigManager(context: Context) {
         private const val KEY_CURSOR_ACCELERATION = "cursor_acceleration"
         private const val KEY_SCROLL_SPEED = "scroll_speed"
         private const val KEY_BINDING_PREFIX = "binding_"
+        private const val KEY_REQUIRE_EXPLICIT_DISMISS = "require_explicit_dismiss"
     }
 
     fun getConfig(): InputConfig {
@@ -111,7 +118,8 @@ class InputConfigManager(context: Context) {
             bindings = bindings,
             cursorSpeed = prefs.getFloat(KEY_CURSOR_SPEED, 8f),
             cursorAcceleration = prefs.getBoolean(KEY_CURSOR_ACCELERATION, true),
-            scrollSpeed = prefs.getFloat(KEY_SCROLL_SPEED, 60f)
+            scrollSpeed = prefs.getFloat(KEY_SCROLL_SPEED, 60f),
+            requireExplicitDismiss = prefs.getBoolean(KEY_REQUIRE_EXPLICIT_DISMISS, false)
         )
     }
 
@@ -122,6 +130,7 @@ class InputConfigManager(context: Context) {
             .putFloat(KEY_CURSOR_SPEED, config.cursorSpeed)
             .putBoolean(KEY_CURSOR_ACCELERATION, config.cursorAcceleration)
             .putFloat(KEY_SCROLL_SPEED, config.scrollSpeed)
+            .putBoolean(KEY_REQUIRE_EXPLICIT_DISMISS, config.requireExplicitDismiss)
 
         // Save all bindings (including defaults for unset ones)
         for (action in BindableAction.entries) {

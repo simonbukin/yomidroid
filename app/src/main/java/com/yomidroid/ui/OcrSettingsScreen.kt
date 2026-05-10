@@ -18,6 +18,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.yomidroid.config.MangaOcrCropScaling
+import com.yomidroid.config.MangaOcrDetector
 import com.yomidroid.config.OcrConfig
 import com.yomidroid.config.OcrConfigManager
 import com.yomidroid.config.OcrEngineType
@@ -72,28 +74,44 @@ fun OcrSettingsScreen(onBack: () -> Unit) {
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp)
         ) {
-            Text(
-                text = "OCR Engine",
-                style = MaterialTheme.typography.titleMedium
-            )
-            Spacer(modifier = Modifier.height(8.dp))
+            Text("OCR Engine", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(8.dp))
+
+            val translationPrefs = remember {
+                context.getSharedPreferences("translation_settings", android.content.Context.MODE_PRIVATE)
+            }
+            val geminiKeyConfigured = remember(config) {
+                !translationPrefs.getString("remote_api_key", "").isNullOrBlank() &&
+                    !translationPrefs.getString("remote_api_endpoint", "").isNullOrBlank()
+            }
 
             OcrEngineType.entries.forEach { engineType ->
                 val isMangaOcr = engineType == OcrEngineType.MANGA_OCR
-                val enabled = !isMangaOcr || mangaOcrReady
+                val isGemini = engineType == OcrEngineType.GEMINI_FLASH
+                val enabled = when {
+                    isMangaOcr -> mangaOcrReady
+                    isGemini -> geminiKeyConfigured
+                    else -> true
+                }
 
                 EngineSelectionCard(
                     engineType = engineType,
                     isSelected = config.selectedEngine == engineType,
                     enabled = enabled,
                     onSelect = {
-                        if (enabled) {
-                            saveAndApply(config.copy(selectedEngine = engineType))
-                        }
+                        if (enabled) saveAndApply(config.copy(selectedEngine = engineType))
                     }
                 )
 
-                // Manga OCR download/delete controls
+                if (isGemini && !geminiKeyConfigured) {
+                    Text(
+                        "Set the endpoint + API key under Settings → Translation → Remote API.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(start = 56.dp, end = 16.dp, bottom = 4.dp)
+                    )
+                }
+
                 if (isMangaOcr) {
                     MangaOcrDownloadControls(
                         isReady = mangaOcrReady,
@@ -103,16 +121,14 @@ fun OcrSettingsScreen(onBack: () -> Unit) {
                             isDownloading = true
                             downloadProgress = 0f
                             scope.launch {
-                                val success = modelManager.downloadModels { progress ->
-                                    downloadProgress = progress
-                                }
+                                val success = modelManager.downloadModels { p -> downloadProgress = p }
                                 isDownloading = false
                                 mangaOcrReady = modelManager.isModelReady()
-                                if (success) {
-                                    Toast.makeText(context, "Manga OCR models downloaded", Toast.LENGTH_SHORT).show()
-                                } else {
-                                    Toast.makeText(context, "Download failed", Toast.LENGTH_SHORT).show()
-                                }
+                                Toast.makeText(
+                                    context,
+                                    if (success) "Manga OCR models downloaded" else "Download failed",
+                                    Toast.LENGTH_SHORT
+                                ).show()
                             }
                         },
                         onDelete = {
@@ -126,12 +142,27 @@ fun OcrSettingsScreen(onBack: () -> Unit) {
                     )
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(Modifier.height(8.dp))
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            if (mangaOcrReady && config.selectedEngine == OcrEngineType.MANGA_OCR) {
+                Spacer(Modifier.height(16.dp))
+                MangaOcrTuningCard(
+                    config = config,
+                    onChange = ::saveAndApply
+                )
+            }
 
-            // Info cards
+            if (config.selectedEngine == OcrEngineType.GEMINI_FLASH) {
+                Spacer(Modifier.height(16.dp))
+                GeminiFlashTuningCard(
+                    config = config,
+                    onChange = ::saveAndApply
+                )
+            }
+
+            Spacer(Modifier.height(24.dp))
+
             InfoCard(
                 title = "ML Kit",
                 points = listOf(
@@ -141,19 +172,196 @@ fun OcrSettingsScreen(onBack: () -> Unit) {
                     "Smaller memory footprint"
                 )
             )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
+            Spacer(Modifier.height(8.dp))
             InfoCard(
                 title = "Manga OCR",
                 points = listOf(
                     "Specialized for manga/comic text",
-                    "Uses PaddleOCR detection + manga-ocr recognition",
-                    "Requires ~141 MB model download",
-                    "Best accuracy for stylized fonts"
+                    "Tuning section above lets you A/B detector + scaling",
+                    "Requires ~141 MB model download"
+                )
+            )
+            Spacer(Modifier.height(8.dp))
+            InfoCard(
+                title = "Gemini Flash",
+                points = listOf(
+                    "Online vision LLM via Google's API",
+                    "Best accuracy on stylized fonts (retro games, manga, low-res text)",
+                    "Reuses translation endpoint + API key",
+                    "Slower (~1–2s per OCR) and counts against your API quota"
                 )
             )
         }
+    }
+}
+
+@Composable
+private fun MangaOcrTuningCard(
+    config: OcrConfig,
+    onChange: (OcrConfig) -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text("Manga OCR tuning", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "Toggle settings and re-OCR to A/B. Watch logcat (`MangaOcrEngine`) for timings.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(Modifier.height(16.dp))
+            SettingLabel("Detector")
+            SegmentedRow(
+                options = MangaOcrDetector.entries,
+                selected = config.mangaOcrDetector,
+                label = { it.displayName },
+                onSelect = { onChange(config.copy(mangaOcrDetector = it)) }
+            )
+            HelperText(config.mangaOcrDetector.description)
+
+            Spacer(Modifier.height(16.dp))
+            SettingLabel("Crop scaling")
+            SegmentedRow(
+                options = MangaOcrCropScaling.entries,
+                selected = config.mangaOcrCropScaling,
+                label = { it.displayName },
+                onSelect = { onChange(config.copy(mangaOcrCropScaling = it)) }
+            )
+            HelperText(
+                "NEAREST keeps pixel art crisp; bilinear is the model's default."
+            )
+
+            Spacer(Modifier.height(16.dp))
+            ToggleRow(
+                label = "Whole-bubble recognition",
+                description = "Cluster lines into bubbles. Faster + matches Manga109 training. " +
+                    "Loses per-line tap precision in coupled mode.",
+                checked = config.mangaOcrWholeBubbleMode,
+                onChange = { onChange(config.copy(mangaOcrWholeBubbleMode = it)) }
+            )
+
+            Spacer(Modifier.height(8.dp))
+            ToggleRow(
+                label = "Preprocessing (sigmoid + auto-invert)",
+                description = "Upscale, contrast, invert dark backgrounds. Disable to feed " +
+                    "manga-ocr the raw screenshot.",
+                checked = config.mangaOcrPreprocess,
+                onChange = { onChange(config.copy(mangaOcrPreprocess = it)) }
+            )
+
+            Spacer(Modifier.height(16.dp))
+            SettingLabel("Detection input scale: ${config.mangaOcrMaxSideLen}px")
+            HelperText(
+                "PaddleOCR's longest-side cap. Higher = sees small text better, slower."
+            )
+            Slider(
+                value = config.mangaOcrMaxSideLen.toFloat(),
+                onValueChange = { v ->
+                    val snapped = (v / 256f).toInt() * 256
+                    onChange(config.copy(mangaOcrMaxSideLen = snapped.coerceIn(1024, 3200)))
+                },
+                valueRange = 1024f..3200f,
+                steps = 8
+            )
+
+        }
+    }
+}
+
+@Composable
+private fun GeminiFlashTuningCard(
+    config: OcrConfig,
+    onChange: (OcrConfig) -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text("Gemini Flash tuning", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(12.dp))
+            ToggleRow(
+                label = "Hybrid bounds (ML Kit + Gemini)",
+                description = "Use ML Kit's per-line bounding boxes with Gemini's text. " +
+                    "Required for accurate cursor lookup. Adds ~100ms (parallel with " +
+                    "the network call so usually free).",
+                checked = config.geminiUseMlKitBounds,
+                onChange = { onChange(config.copy(geminiUseMlKitBounds = it)) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun SettingLabel(text: String) {
+    Text(text, style = MaterialTheme.typography.labelMedium)
+}
+
+@Composable
+private fun HelperText(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = 4.dp)
+    )
+}
+
+@Composable
+private fun <T> SegmentedRow(
+    options: List<T>,
+    selected: T,
+    label: (T) -> String,
+    onSelect: (T) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        options.forEach { option ->
+            val isSel = option == selected
+            FilterChip(
+                modifier = Modifier.weight(1f),
+                selected = isSel,
+                onClick = { onSelect(option) },
+                label = { Text(label(option), maxLines = 2) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun ToggleRow(
+    label: String,
+    description: String,
+    checked: Boolean,
+    onChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onChange(!checked) }
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.bodyMedium)
+            Text(
+                description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Switch(checked = checked, onCheckedChange = onChange)
     }
 }
 
@@ -176,9 +384,9 @@ private fun MangaOcrDownloadControls(
                     progress = { downloadProgress },
                     modifier = Modifier.fillMaxWidth()
                 )
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(Modifier.height(4.dp))
                 Text(
-                    text = "Downloading... ${(downloadProgress * 100).toInt()}%",
+                    "Downloading... ${(downloadProgress * 100).toInt()}%",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -191,20 +399,20 @@ private fun MangaOcrDownloadControls(
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(16.dp)
                     )
-                    Spacer(modifier = Modifier.width(4.dp))
+                    Spacer(Modifier.width(4.dp))
                     Text(
-                        text = "Models downloaded",
+                        "Models downloaded",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.primary
                     )
-                    Spacer(modifier = Modifier.weight(1f))
+                    Spacer(Modifier.weight(1f))
                     TextButton(onClick = onDelete) {
                         Icon(
                             Icons.Filled.Delete,
                             contentDescription = "Delete",
                             modifier = Modifier.size(16.dp)
                         )
-                        Spacer(modifier = Modifier.width(4.dp))
+                        Spacer(Modifier.width(4.dp))
                         Text("Delete")
                     }
                 }
@@ -216,7 +424,7 @@ private fun MangaOcrDownloadControls(
                         contentDescription = "Download",
                         modifier = Modifier.size(18.dp)
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(Modifier.width(8.dp))
                     Text("Download (~141 MB)")
                 }
             }
@@ -241,14 +449,10 @@ private fun EngineSelectionCard(
             else
                 MaterialTheme.colorScheme.surface
         ),
-        border = if (isSelected)
-            BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
-        else null
+        border = if (isSelected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             RadioButton(
@@ -256,23 +460,19 @@ private fun EngineSelectionCard(
                 onClick = { if (enabled) onSelect() },
                 enabled = enabled
             )
-            Spacer(modifier = Modifier.width(12.dp))
+            Spacer(Modifier.width(12.dp))
             Column {
                 Text(
-                    text = engineType.displayName,
+                    engineType.displayName,
                     style = MaterialTheme.typography.bodyLarge,
-                    color = if (enabled)
-                        MaterialTheme.colorScheme.onSurface
-                    else
-                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                    color = if (enabled) MaterialTheme.colorScheme.onSurface
+                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
                 )
                 Text(
-                    text = engineType.description,
+                    engineType.description,
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (enabled)
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    else
-                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                    color = if (enabled) MaterialTheme.colorScheme.onSurfaceVariant
+                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
                 )
             }
         }
@@ -280,10 +480,7 @@ private fun EngineSelectionCard(
 }
 
 @Composable
-private fun InfoCard(
-    title: String,
-    points: List<String>
-) {
+private fun InfoCard(title: String, points: List<String>) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -291,14 +488,11 @@ private fun InfoCard(
         )
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleSmall
-            )
-            Spacer(modifier = Modifier.height(8.dp))
+            Text(title, style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(8.dp))
             points.forEach { point ->
                 Text(
-                    text = "\u2022 $point",
+                    "• $point",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

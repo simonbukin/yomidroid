@@ -40,7 +40,13 @@ class OverlayTextView(
     private val onCursorLookup: ((String, Int, Float, Float) -> Unit)? = null,
     private val onAnkiExport: ((DictionaryEntry, String) -> Unit)? = null,  // Export to Anki callback
     private val onSaveToHistory: ((DictionaryEntry, String) -> Unit)? = null,  // Save to history callback
-    private val onDismissRichPopup: (() -> Unit)? = null  // Dismiss WebView popup callback
+    private val onDismissRichPopup: (() -> Unit)? = null,  // Dismiss WebView popup callback
+    /**
+     * When true: tap-outside-text-and-popup is a no-op; only the on-screen X
+     * handle (rendered top-right) or the hardware DISMISS keybind closes the
+     * overlay. Popups still dismiss on tap-outside so users aren't stuck.
+     */
+    private val requireExplicitDismiss: Boolean = false
 ) : View(context) {
 
     private val density = context.resources.displayMetrics.density
@@ -214,6 +220,10 @@ class OverlayTextView(
     private var popupContentHeight: Float = 0f
     private var popupVisibleHeight: Float = 0f
     private var popupBounds: RectF? = null
+
+    // Hit area for the explicit-dismiss X handle, populated each onDraw and
+    // consulted by onTouchEvent. Empty when [requireExplicitDismiss] is off.
+    private val dismissHandleBounds = RectF()
     private var lastTouchY: Float = 0f
     private var isDraggingPopup: Boolean = false
 
@@ -347,6 +357,43 @@ class OverlayTextView(
         if (showingNoResults) {
             drawNoResultsPopup(canvas)
         }
+
+        // Explicit-dismiss handle: small X in the top-right of the overlay,
+        // updated each draw so [dismissHandleBounds] tracks the rendered hit
+        // area for the touch handler.
+        if (requireExplicitDismiss) {
+            drawDismissHandle(canvas)
+        }
+    }
+
+    private fun drawDismissHandle(canvas: Canvas) {
+        val size = 44f * density
+        val margin = 12f * density
+        val cx = width - margin - size / 2f
+        val cy = margin + size / 2f
+        dismissHandleBounds.set(cx - size / 2f, cy - size / 2f, cx + size / 2f, cy + size / 2f)
+
+        val bg = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(220, 20, 20, 25)
+            style = Paint.Style.FILL
+        }
+        val border = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(120, 255, 255, 255)
+            style = Paint.Style.STROKE
+            strokeWidth = 1.5f * density
+        }
+        val cross = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            style = Paint.Style.STROKE
+            strokeWidth = 2.5f * density
+            strokeCap = Paint.Cap.ROUND
+        }
+
+        canvas.drawCircle(cx, cy, size / 2f, bg)
+        canvas.drawCircle(cx, cy, size / 2f, border)
+        val arm = size * 0.22f
+        canvas.drawLine(cx - arm, cy - arm, cx + arm, cy + arm, cross)
+        canvas.drawLine(cx + arm, cy - arm, cx - arm, cy + arm, cross)
     }
 
     private fun drawNoResultsPopup(canvas: Canvas) {
@@ -882,6 +929,14 @@ class OverlayTextView(
                     return true
                 }
 
+                // X handle (only rendered in explicit-dismiss mode) takes
+                // priority — checked before text regions so it works even if
+                // the handle overlaps OCR bounds.
+                if (requireExplicitDismiss && dismissHandleBounds.contains(x, y)) {
+                    onDismissRequested()
+                    return true
+                }
+
                 // Check if tap is on any per-row Anki export button
                 for ((index, bounds) in ankiButtonBoundsList.withIndex()) {
                     if (bounds.contains(x, y) && index < currentDefinitions.size) {
@@ -948,8 +1003,13 @@ class OverlayTextView(
                     return true
                 }
 
-                // Tap outside text with no popup showing - dismiss entire overlay
-                onDismissRequested()
+                // Tap outside text with no popup showing — dismiss whole
+                // overlay, unless explicit-dismiss mode is on, in which case
+                // mistaps are no-ops and dismissal is gated to the X handle
+                // or the hardware DISMISS keybind.
+                if (!requireExplicitDismiss) {
+                    onDismissRequested()
+                }
                 return true
             }
         }
