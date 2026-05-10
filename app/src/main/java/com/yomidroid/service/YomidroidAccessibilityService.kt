@@ -246,7 +246,7 @@ class YomidroidAccessibilityService : AccessibilityService() {
         ocrEngine?.close()
 
         // Create engine based on config
-        ocrEngine = OcrEngineFactory.createEngine(this, config.selectedEngine)
+        ocrEngine = OcrEngineFactory.createEngine(this, config)
 
         Log.d(TAG, "OCR engine initialized: ${config.selectedEngine}")
     }
@@ -842,6 +842,7 @@ class YomidroidAccessibilityService : AccessibilityService() {
             scaleX = scaleX,
             scaleY = scaleY,
             highlightColor = colorConfig.highlightColor,
+            requireExplicitDismiss = inputConfig.requireExplicitDismiss,
             onTextTapped = { ocrResult, charIndex ->
                 onTextTapped(ocrResult, charIndex)
             },
@@ -2112,11 +2113,13 @@ class YomidroidAccessibilityService : AccessibilityService() {
                             fabView?.toggleCursorSide()
                             Log.d(TAG, "Double tap - toggled cursor side")
                         } else {
-                            // Single tap - only scan if no overlay, don't dismiss
-                            if (overlayView == null) {
-                                captureScreen()
-                            }
-                            // If overlay is visible, do nothing - let user tap on overlay to dismiss
+                            // Single tap always re-scans. The previous "do
+                            // nothing if overlay visible" behavior produced
+                            // a confusing two-tap workflow: first tap to
+                            // dismiss, second tap to scan. captureScreen()
+                            // hides the FAB and showTextOverlay() replaces
+                            // any existing overlay, so this is safe.
+                            captureScreen()
                         }
                         lastTapTime = now
                     } else {

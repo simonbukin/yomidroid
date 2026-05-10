@@ -1,6 +1,7 @@
 package com.yomidroid.ocr
 
 import android.content.Context
+import com.yomidroid.config.OcrConfig
 import com.yomidroid.config.OcrEngineType
 
 /**
@@ -8,10 +9,14 @@ import com.yomidroid.config.OcrEngineType
  */
 object OcrEngineFactory {
 
-    fun createEngine(context: Context, type: OcrEngineType): OcrEngine {
-        return when (type) {
+    fun createEngine(context: Context, config: OcrConfig): OcrEngine {
+        return when (config.selectedEngine) {
             OcrEngineType.ML_KIT -> MlKitOcrEngine()
-            OcrEngineType.MANGA_OCR -> MangaOcrEngine(context)
+            OcrEngineType.MANGA_OCR -> MangaOcrEngine(context, config)
+            OcrEngineType.GEMINI_FLASH -> GeminiFlashOcrEngine(
+                context,
+                useMlKitBounds = config.geminiUseMlKitBounds
+            )
         }
     }
 

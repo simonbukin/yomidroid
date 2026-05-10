@@ -184,3 +184,18 @@ data class DictionaryEntryWithPosition(
     val expression: String get() = entry.expression
     val reading: String get() = entry.reading
 }
+
+/**
+ * A matched word + every candidate dictionary entry for that match. Mirrors
+ * what the hover-cursor popup gets back from [DictionaryEngine.findTerms];
+ * lets the parse-tab show all candidates per word in an expandable card
+ * instead of cherry-picking the top hit.
+ */
+data class DictionaryWordMatch(
+    val matchedText: String,
+    val startIndex: Int,
+    val candidates: List<DictionaryEntry>
+) {
+    val best: DictionaryEntry? get() = candidates.firstOrNull()
+    val endIndex: Int get() = startIndex + matchedText.length
+}

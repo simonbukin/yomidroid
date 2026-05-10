@@ -41,7 +41,7 @@ import com.yomidroid.anki.ExportResult
 import com.yomidroid.config.ColorConfigManager
 import com.yomidroid.dictionary.DictionaryEngine
 import com.yomidroid.dictionary.DictionaryEntry
-import com.yomidroid.dictionary.DictionaryEntryWithPosition
+import com.yomidroid.dictionary.DictionaryWordMatch
 import com.yomidroid.dictionary.LookupResultRepository
 import com.yomidroid.grammar.*
 import com.yomidroid.ocr.OcrResultRepository
@@ -299,14 +299,14 @@ private fun ParseTab(
 
     var analysisResult by remember { mutableStateOf<GrammarAnalysisResult?>(null) }
     var resolvedGrammar by remember { mutableStateOf<List<ResolvedGrammarPoint>>(emptyList()) }
-    var dictionaryMatches by remember { mutableStateOf<List<DictionaryEntryWithPosition>>(emptyList()) }
+    var bunsetsuLookups by remember { mutableStateOf<List<BunsetsuLookups>>(emptyList()) }
     var isAnalyzing by remember { mutableStateOf(false) }
 
     LaunchedEffect(loadVersion) {
         if (loadVersion > 0) {
             analysisResult = null
             resolvedGrammar = emptyList()
-            dictionaryMatches = emptyList()
+            bunsetsuLookups = emptyList()
         }
     }
 
@@ -317,10 +317,22 @@ private fun ParseTab(
             isAnalyzing = true
             val result = analyzer.analyze(sentence)
             val resolved = grammarResolver.resolveGrammar(sentence)
-            val matches = withContext(Dispatchers.IO) { dictionaryEngine.findAllMatches(sentence) }
+            val lookups = withContext(Dispatchers.IO) {
+                var idx = 0
+                result.bunsetsu.map { bs ->
+                    val start = idx
+                    val end = idx + bs.text.length
+                    idx = end
+                    BunsetsuLookups(
+                        bunsetsu = bs,
+                        startInSentence = start,
+                        matches = dictionaryEngine.findAllMatchesGrouped(sentence, start, end)
+                    )
+                }
+            }
             analysisResult = result
             resolvedGrammar = resolved
-            dictionaryMatches = matches
+            bunsetsuLookups = lookups
             isAnalyzing = false
         }
     }
@@ -405,16 +417,28 @@ private fun ParseTab(
                 }
             }
 
-            if (dictionaryMatches.isNotEmpty()) {
+            val nonEmptyLookups = bunsetsuLookups.filter { it.matches.isNotEmpty() }
+            if (nonEmptyLookups.isNotEmpty()) {
+                val totalMatches = nonEmptyLookups.sumOf { it.matches.size }
                 item {
                     Text(
-                        text = "DICTIONARY (${dictionaryMatches.size} matches)",
+                        text = "DICTIONARY ($totalMatches words)",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.padding(top = 8.dp)
                     )
                 }
-                items(dictionaryMatches.size) { i -> DictionaryMatchCard(dictionaryMatches[i]) }
+                nonEmptyLookups.forEach { lookup ->
+                    item(key = "bunsetsu-header-${lookup.startInSentence}") {
+                        BunsetsuHeader(lookup.bunsetsu)
+                    }
+                    items(
+                        items = lookup.matches,
+                        key = { match -> "match-${lookup.startInSentence}-${match.startIndex}-${match.matchedText}" }
+                    ) { match ->
+                        DictionaryWordCard(match)
+                    }
+                }
             }
         }
 
@@ -980,12 +1004,72 @@ private fun DojgSection(
     }
 }
 
+/**
+ * Pairs a Kuromoji bunsetsu with the dictionary lookups for the words inside
+ * its substring. Lets the parse-tab render bunsetsu boundaries as headers
+ * with their words' candidate dictionary entries grouped underneath.
+ */
+private data class BunsetsuLookups(
+    val bunsetsu: Bunsetsu,
+    val startInSentence: Int,
+    val matches: List<DictionaryWordMatch>
+)
+
 @Composable
-private fun DictionaryMatchCard(match: DictionaryEntryWithPosition) {
+private fun BunsetsuHeader(bunsetsu: Bunsetsu) {
+    val showReading = bunsetsu.reading != bunsetsu.text &&
+        bunsetsu.reading.isNotBlank()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 4.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = bunsetsu.text,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        if (showReading) {
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = "【${bunsetsu.reading}】",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        bunsetsu.headWord?.let { head ->
+            Spacer(Modifier.width(8.dp))
+            val color = getPosBadgeColor(head.posColor)
+            Surface(
+                color = color.copy(alpha = 0.12f),
+                shape = RoundedCornerShape(4.dp)
+            ) {
+                Text(
+                    text = head.posLabel,
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = color
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Headline (best entry's expression + reading + first gloss) with tap-to-
+ * expand into a full WebView render of every candidate entry — same
+ * candidates the hover-cursor popup shows. Expanded view supports scrolling
+ * through multiple dictionaries / readings the way the overlay does.
+ */
+@Composable
+private fun DictionaryWordCard(match: DictionaryWordMatch) {
     val context = LocalContext.current
     val ttsManager = remember { TtsManager.getInstance(context) }
     var expanded by remember { mutableStateOf(false) }
-    val entry = match.entry
+    val best = match.best ?: return
+
     Card(
         modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded },
         colors = CardDefaults.cardColors(
@@ -998,18 +1082,26 @@ private fun DictionaryMatchCard(match: DictionaryEntryWithPosition) {
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.Bottom) {
+                Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.weight(1f)) {
                     Text(
-                        text = entry.expression,
+                        text = best.expression,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
-                    if (entry.reading.isNotBlank() && entry.reading != entry.expression) {
-                        Spacer(modifier = Modifier.width(6.dp))
+                    if (best.reading.isNotBlank() && best.reading != best.expression) {
+                        Spacer(Modifier.width(6.dp))
                         Text(
-                            text = "【${entry.reading}】",
+                            text = "【${best.reading}】",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    if (match.candidates.size > 1) {
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = "+${match.candidates.size - 1}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
                         )
                     }
                 }
@@ -1017,7 +1109,7 @@ private fun DictionaryMatchCard(match: DictionaryEntryWithPosition) {
                     IconButton(
                         onClick = {
                             ttsManager.speak(
-                                entry.reading.ifBlank { entry.expression },
+                                best.reading.ifBlank { best.expression },
                                 showErrorToast = true
                             )
                         },
@@ -1038,7 +1130,7 @@ private fun DictionaryMatchCard(match: DictionaryEntryWithPosition) {
                 }
             }
             Text(
-                text = entry.glossary.firstOrNull() ?: "",
+                text = best.glossary.firstOrNull() ?: "",
                 style = MaterialTheme.typography.bodyMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -1052,7 +1144,7 @@ private fun DictionaryMatchCard(match: DictionaryEntryWithPosition) {
                 Column(modifier = Modifier.padding(top = 8.dp)) {
                     HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                     DictionaryEntryWebView(
-                        entries = listOf(entry),
+                        entries = match.candidates,
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
