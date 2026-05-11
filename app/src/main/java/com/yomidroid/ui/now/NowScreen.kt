@@ -68,7 +68,7 @@ private enum class NowTab(val label: String) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun NowScreen() {
+fun NowScreen(onOpenKanji: ((String) -> Unit)? = null) {
     val context = LocalContext.current
     val colorConfigManager = remember { ColorConfigManager(context) }
     val isDecoupledMode = remember { colorConfigManager.isDecoupledMode() }
@@ -137,7 +137,7 @@ fun NowScreen() {
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
             when (selectedTab) {
-                NowTab.LOOKUP -> LookupTab()
+                NowTab.LOOKUP -> LookupTab(onOpenKanji = onOpenKanji)
                 NowTab.PARSE -> ParseTab(
                     sentence = sentence,
                     onSentenceChange = onSentenceChange,
@@ -209,7 +209,7 @@ private fun FreshScanBanner(onLoadLatestScan: () -> Unit) {
 // ============================================================
 
 @Composable
-private fun LookupTab() {
+private fun LookupTab(onOpenKanji: ((String) -> Unit)? = null) {
     val context = LocalContext.current
     val entries by LookupResultRepository.latestEntries.collectAsState()
     val sentence by LookupResultRepository.latestSentence.collectAsState()
@@ -263,6 +263,7 @@ private fun LookupTab() {
             DictionaryEntryWebView(
                 entries = entries,
                 onAnkiExport = { entry, index -> exportEntry(entry, index) },
+                onOpenKanji = onOpenKanji,
                 controller = webViewController,
                 modifier = Modifier.fillMaxWidth()
             )

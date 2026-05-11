@@ -466,6 +466,76 @@ class DictionaryDb private constructor(private val context: Context) {
     }
 
     /**
+     * Find term entries whose expression contains the given kanji.
+     * Queries all enabled term dictionaries, sorts by frequency (lowest = most common first),
+     * deduplicates by expression+reading, and caps at [limit].
+     */
+    fun findWordsContainingKanji(character: String, limit: Int = 10): List<TermData> {
+        if (character.isEmpty()) return emptyList()
+        val results = mutableListOf<TermData>()
+        val seen = HashSet<String>()
+        val pattern = "%$character%"
+        // Pull a generous candidate pool from each dict, then sort + cap globally.
+        val perDictLimit = (limit * 4).coerceAtLeast(40)
+        for (dictId in dictionaryPriority) {
+            val db = dictionaryDatabases[dictId] ?: continue
+            try {
+                val hasGlossaryRich = hasColumn(db, "terms", "glossary_rich")
+                val hasDefTags = hasColumn(db, "terms", "definition_tags")
+                val sql = buildString {
+                    append("SELECT t.id, t.expression, t.reading, t.glossary, t.pos, t.score, t.sequence,")
+                    append(" COALESCE(t.source, 'custom') as source, t.name_type, t.frequency_rank")
+                    if (hasGlossaryRich) append(", t.glossary_rich")
+                    if (hasDefTags) append(", t.definition_tags")
+                    append(" FROM terms t WHERE t.expression LIKE ? ESCAPE '\\'")
+                    append(" ORDER BY CASE WHEN t.frequency_rank IS NOT NULL THEN 0 ELSE 1 END,")
+                    append(" t.frequency_rank ASC, t.score DESC LIMIT $perDictLimit")
+                }
+                db.rawQuery(sql, arrayOf(pattern)).use { cursor ->
+                    while (cursor.moveToNext()) {
+                        val expression = cursor.getString(1) ?: continue
+                        if (!expression.contains(character)) continue
+                        val reading = cursor.getString(2) ?: ""
+                        val key = "$expression $reading"
+                        if (!seen.add(key)) continue
+                        val freqRank = if (cursor.isNull(9)) null else cursor.getInt(9)
+                        var col = 10
+                        val glossaryRich = if (hasGlossaryRich) cursor.getString(col++) else null
+                        val definitionTags = if (hasDefTags) cursor.getString(col) else null
+                        results.add(
+                            TermData(
+                                id = cursor.getLong(0),
+                                expression = expression,
+                                reading = reading,
+                                glossary = cursor.getString(3) ?: "[]",
+                                partsOfSpeech = cursor.getString(4) ?: "[]",
+                                score = cursor.getInt(5),
+                                sequence = cursor.getInt(6),
+                                source = cursor.getString(7) ?: "custom",
+                                nameType = cursor.getString(8),
+                                frequencyRank = freqRank,
+                                sourceDictId = dictId,
+                                glossaryRich = glossaryRich,
+                                definitionTags = definitionTags,
+                            )
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "findWordsContainingKanji failed for $dictId: ${e.message}")
+            }
+        }
+        return results
+            .sortedWith(
+                compareBy(
+                    { it.frequencyRank ?: Int.MAX_VALUE },
+                    { it.expression.length },
+                )
+            )
+            .take(limit)
+    }
+
+    /**
      * Get total count of entries across all loaded dictionaries.
      */
     fun count(): Int {

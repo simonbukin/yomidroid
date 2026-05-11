@@ -17,14 +17,15 @@ Japanese OCR dictionary overlay for Android. Capture any screen, recognize Japan
 
 ### In-app workspace
 
-The app organizes around five tabs in the bottom nav:
+The app organizes around six tabs in the bottom nav:
 
 - **Now** — the current scan workspace. Three sub-tabs over a shared editable sentence:
 - **Lookup** (decoupled mode only) — dictionary entries from your last tap, mirrored from the overlay.
 - **Parse** — Kuromoji morphology, bunsetsu chips, DOJG grammar matches with one-line English headlines, source tags, and link-outs to GameGengo, Tae Kim, Imabi, HJG, and the Japanese Expression Pattern Dictionary.
 - **Translate** — Natural / Literal / Leipzig gloss, powered by Gemini Flash with on-device Kuromoji as the offline fallback.
-- **Search** — universal search. Type Japanese, romaji, or an English meaning ("rashii", "らしい", or "seems like" all surface the same entry). Filter to Words or Grammar; under Grammar, narrow further by source.
+- **Search** — universal search. Type Japanese, romaji, an English meaning, or a single kanji ("rashii", "らしい", or "seems like" all surface the same entry; "water" surfaces 水 and friends). Filter to Words, Kanji, or Grammar.
 - **Library** — browse ~2,800 grammar patterns aggregated from DOJG, HJG, Tae Kim, Imabi, the Japanese Expression Pattern Dictionary (文型辞典), and GameGengo. Filter chips per source, with short English headlines on every card.
+- **Kanji** — browse all 13,108 kanji in a tappable grid. Filter by JLPT N5–N1, Jōyō, Jinmeiyō, or school grade. Tap a kanji for readings (with TTS), meanings, stroke count, Heisig keyword, Mainichi frequency, and example words pulled from your installed dictionary. Every kanji rendered in a lookup (overlay popup, history detail, in-app lookup) is individually tappable — tap any kanji in a word and you jump straight to its detail page.
 - **History** — every word lookup with screenshot, source app, time filters, Anki export per row.
 - **Settings** — permissions, modes, recognition, translation backend, Anki export, colors, hardware controls.
 
@@ -100,6 +101,18 @@ The app ships without bundled dictionaries. The in-app *Recommended* importer pu
 - KANJIDIC and pitch-accent data from the standard Yomitan ecosystem
 
 Any Yomitan-format `.zip` works via the manual import flow.
+
+### Kanji Data
+
+The Kanji tab and per-kanji detail pages are powered by [kanjiapi.dev](https://kanjiapi.dev) (source: [`onlyskin/kanjiapi.dev`](https://github.com/onlyskin/kanjiapi.dev), MIT). ~13k kanji with readings, meanings, JLPT level, school grade, stroke count, Heisig keyword, and Mainichi frequency rank.
+
+`tools/prepare_kanji_data.py` reads a local `kanjiapi_full.json` (the full upstream rollup, schema `{kanjis, readings, words}`; ~98 MB, gitignored) and emits the slim `app/src/main/assets/kanji_data.json` (~1.3 MB) that ships in the APK. To regenerate from scratch, build the rollup with kanjiapi.dev's own `make` pipeline (see that repo's `makefile`) or by iterating over `/v1/kanji/{char}` for every character in `/v1/kanji/all`, then run:
+
+```bash
+python3 tools/prepare_kanji_data.py
+```
+
+Example words on the kanji detail screen come from whichever term dictionary you've imported — they're not bundled.
 
 ### Grammar Data
 

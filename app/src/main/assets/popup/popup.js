@@ -197,7 +197,7 @@ function createGroupedEntry(group, groupIndex) {
     if (hasFurigana) {
         hwTerm.appendChild(buildFurigana(first.expression, first.reading));
     } else {
-        hwTerm.textContent = first.expression;
+        appendKanjiAwareText(hwTerm, first.expression);
     }
     topRow.appendChild(hwTerm);
 
@@ -429,6 +429,34 @@ function hasKanji(text) {
     return false;
 }
 
+// Append [text] to [parent] with each kanji wrapped in a tappable <span>.
+// Used in headword rendering so per-character taps can open the Kanji detail view.
+function appendKanjiAwareText(parent, text) {
+    for (var i = 0; i < text.length; i++) {
+        var ch = text[i];
+        if (isKanjiChar(ch)) {
+            var span = document.createElement('span');
+            span.className = 'kanji-tap';
+            span.textContent = ch;
+            span.addEventListener('click', makeKanjiClickHandler(ch));
+            parent.appendChild(span);
+        } else {
+            parent.appendChild(document.createTextNode(ch));
+        }
+    }
+}
+
+function makeKanjiClickHandler(ch) {
+    return function(ev) {
+        ev.stopPropagation();
+        try {
+            if (window.YomidroidPopup && typeof window.YomidroidPopup.openKanji === 'function') {
+                window.YomidroidPopup.openKanji(ch);
+            }
+        } catch (_) {}
+    };
+}
+
 function buildFurigana(expression, reading) {
     var frag = document.createDocumentFragment();
     // Simple approach: wrap entire expression in ruby with reading
@@ -438,13 +466,14 @@ function buildFurigana(expression, reading) {
         var seg = segments[i];
         if (seg.ruby) {
             var ruby = document.createElement('ruby');
-            ruby.appendChild(document.createTextNode(seg.text));
+            // Wrap each kanji in the base text so it's individually tappable.
+            appendKanjiAwareText(ruby, seg.text);
             var rt = document.createElement('rt');
             rt.textContent = seg.ruby;
             ruby.appendChild(rt);
             frag.appendChild(ruby);
         } else {
-            frag.appendChild(document.createTextNode(seg.text));
+            appendKanjiAwareText(frag, seg.text);
         }
     }
     return frag;

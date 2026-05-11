@@ -157,4 +157,96 @@ object Romaji {
         }
         return sb.toString()
     }
+
+    // Inverse: romaji → hiragana, used so the in-app Search field can accept
+    // "mizu" / "rashii" / "konnichiwa" and route them into kana-keyed lookups.
+    // Reverse-built from the same tables that drive kanaToRomaji so the round-trip
+    // stays consistent for the common cases (we lose 'ji'/'zu' ambiguity — we always
+    // pick the ざ-row 'じ'/'ず' over the rare だ-row 'ぢ'/'づ').
+    private val ROMAJI_TO_HIRA: Map<String, String> by lazy {
+        buildMap {
+            // 3-char digraphs (sha/shu/sho/cha/chu/cho/etc are 3 chars)
+            for ((kana, r) in DIGRAPH) {
+                // DIGRAPH duplicates each entry as hiragana+katakana — keep only hiragana.
+                if (kana.all { it.code in HIRAGANA_START..HIRAGANA_END }) {
+                    putIfAbsent(r, kana)
+                }
+            }
+            // Single mono
+            val seenHira = mutableSetOf<String>()
+            for ((char, r) in MONO) {
+                if (char.code !in HIRAGANA_START..HIRAGANA_END) continue
+                if (r.isEmpty()) continue
+                // First-write-wins: prefer ざ-row over だ-row for "ji"/"zu" because that's the
+                // common modern spelling users actually type.
+                if (seenHira.add(r)) put(r, char.toString())
+            }
+            // Common alt spellings that aren't in the canonical Hepburn table.
+            put("si", "し"); put("ti", "ち"); put("tu", "つ"); put("hu", "ふ")
+            put("sya", "しゃ"); put("syu", "しゅ"); put("syo", "しょ")
+            put("tya", "ちゃ"); put("tyu", "ちゅ"); put("tyo", "ちょ")
+            put("zya", "じゃ"); put("zyu", "じゅ"); put("zyo", "じょ")
+            put("jya", "じゃ"); put("jyu", "じゅ"); put("jyo", "じょ")
+            // Intentionally no "nn" entry: in "konnichiwa" the first n is ん, the second
+            // starts a fresh 'ni' mora. Falling back to the 1-char 'n' → ん handles it.
+        }
+    }
+
+    /**
+     * Best-effort Hepburn romaji → hiragana. Lowercased; unknown characters
+     * pass through. Handles doubled consonants (kka→っか), 'n' before consonants
+     * (anko→あんこ), and long vowels via repeated vowels (ou stays as おう).
+     * Empty string in → empty string out.
+     */
+    fun romajiToHiragana(input: String): String {
+        if (input.isEmpty()) return input
+        val s = input.lowercase()
+        val out = StringBuilder(s.length)
+        var i = 0
+        while (i < s.length) {
+            val c = s[i]
+
+            // Pass through non-letters.
+            if (c !in 'a'..'z') {
+                out.append(c)
+                i++
+                continue
+            }
+
+            // Doubled consonant → sokuon. "kka" / "tta" / "ssa" / "ppa" etc.
+            // Also "tch" → "っち". Special case: "nn" handled by 2-char lookup below.
+            if (i + 1 < s.length && c == s[i + 1] && c != 'n' && c != 'a' && c != 'i' && c != 'u' && c != 'e' && c != 'o') {
+                out.append('っ')
+                i++
+                continue
+            }
+            if (c == 't' && i + 2 < s.length && s[i + 1] == 'c' && s[i + 2] == 'h') {
+                out.append('っ')
+                i++
+                continue
+            }
+
+            // Try 3-, 2-, then 1-char matches against the table.
+            val three = if (i + 3 <= s.length) ROMAJI_TO_HIRA[s.substring(i, i + 3)] else null
+            if (three != null) { out.append(three); i += 3; continue }
+            val two = if (i + 2 <= s.length) ROMAJI_TO_HIRA[s.substring(i, i + 2)] else null
+            if (two != null) { out.append(two); i += 2; continue }
+            val one = ROMAJI_TO_HIRA[s.substring(i, i + 1)]
+            if (one != null) { out.append(one); i++; continue }
+
+            // 'n' before another consonant (or end of input) → ん.
+            if (c == 'n') {
+                val next = if (i + 1 < s.length) s[i + 1] else null
+                if (next == null || next !in "aiueoy") {
+                    out.append('ん')
+                    i++
+                    continue
+                }
+            }
+
+            // Unknown character — drop it (rather than emit garbage that ruins lookups).
+            i++
+        }
+        return out.toString()
+    }
 }

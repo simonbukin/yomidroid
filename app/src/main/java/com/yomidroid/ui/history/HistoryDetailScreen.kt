@@ -55,7 +55,8 @@ private fun copyToClipboard(context: android.content.Context, label: String, tex
 @Composable
 fun HistoryDetailScreen(
     historyId: Long,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onOpenKanji: ((String) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -321,6 +322,7 @@ fun HistoryDetailScreen(
                             Card(modifier = Modifier.fillMaxWidth()) {
                                 DictionaryEntryWebView(
                                     entries = dictEntries,
+                                    onOpenKanji = onOpenKanji,
                                     modifier = Modifier.fillMaxWidth()
                                 )
                             }

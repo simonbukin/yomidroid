@@ -65,6 +65,9 @@ JMnedict*
 # Dictionary tool data directory (large source/output files)
 tools/data/
 
+# Kanji API bulk source (98 MB) — slim assets are committed instead
+/kanjiapi_full.json
+
 # Temporary files
 *.tmp
 *.temp

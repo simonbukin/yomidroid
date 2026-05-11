@@ -442,3 +442,14 @@ a, .sc-a {
     margin: 0.2em 0;
     vertical-align: middle;
 }
+
+/* Tappable kanji in headwords — opens Kanji detail view */
+.kanji-tap {
+    cursor: pointer;
+    border-radius: 2px;
+    transition: background 0.1s ease;
+}
+.kanji-tap:active,
+.kanji-tap:hover {
+    background: rgba(130, 180, 255, 0.18);
+}

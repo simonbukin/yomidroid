@@ -2,6 +2,7 @@ package com.yomidroid.service
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.Intent
 import android.graphics.Color
 import android.graphics.Rect
 import android.os.Handler
@@ -13,6 +14,7 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
+import com.yomidroid.MainActivity
 import com.yomidroid.dictionary.DictionaryEntry
 import com.yomidroid.tts.TtsManager
 
@@ -313,6 +315,17 @@ class OverlayPopupWebView(private val context: Context) {
         fun speak(text: String) {
             handler.post {
                 ttsManager.speak(text)
+            }
+        }
+
+        @JavascriptInterface
+        fun openKanji(character: String) {
+            handler.post {
+                val intent = Intent(context, MainActivity::class.java).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                    putExtra(MainActivity.EXTRA_OPEN_KANJI, character)
+                }
+                context.startActivity(intent)
             }
         }
     }

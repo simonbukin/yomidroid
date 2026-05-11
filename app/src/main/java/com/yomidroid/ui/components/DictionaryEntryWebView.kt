@@ -29,6 +29,7 @@ class DictionaryWebViewController {
     internal var webView: WebView? = null
     internal var entries: List<DictionaryEntry> = emptyList()
     internal var onAnkiExport: ((DictionaryEntry, Int) -> Unit)? = null
+    internal var onOpenKanji: ((String) -> Unit)? = null
 
     fun setAnkiResult(index: Int, status: String) {
         val wv = webView ?: return
@@ -54,6 +55,7 @@ fun DictionaryEntryWebView(
     customCss: String? = null,
     dictionaryCssMap: Map<String, String> = emptyMap(),
     onAnkiExport: ((DictionaryEntry, Int) -> Unit)? = null,
+    onOpenKanji: ((String) -> Unit)? = null,
     controller: DictionaryWebViewController = rememberDictionaryWebViewController(),
     modifier: Modifier = Modifier
 ) {
@@ -70,6 +72,7 @@ fun DictionaryEntryWebView(
     SideEffect {
         controller.entries = entries
         controller.onAnkiExport = onAnkiExport
+        controller.onOpenKanji = onOpenKanji
     }
 
     AndroidView(
@@ -147,5 +150,10 @@ private class DictionaryWebViewBridge(
     @JavascriptInterface
     fun speak(text: String) {
         mainHandler.post { tts.speak(text) }
+    }
+
+    @JavascriptInterface
+    fun openKanji(character: String) {
+        mainHandler.post { controller.onOpenKanji?.invoke(character) }
     }
 }
