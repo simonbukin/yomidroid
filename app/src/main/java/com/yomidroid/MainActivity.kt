@@ -11,10 +11,12 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Translate
+import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
@@ -43,6 +45,8 @@ import com.yomidroid.ui.history.HistoryDetailScreen
 import com.yomidroid.ui.history.HistoryScreen
 import com.yomidroid.ui.history.HistoryScreenState
 import com.yomidroid.ui.history.rememberHistoryScreenState
+import com.yomidroid.ui.kanji.KanjiDetailScreen
+import com.yomidroid.ui.kanji.KanjiGridScreen
 import com.yomidroid.ui.library.LibraryScreen
 import com.yomidroid.ui.now.NowScreen
 import com.yomidroid.ui.search.SearchScreen
@@ -55,6 +59,8 @@ sealed class Screen(val route: String) {
     object Now : Screen("now")
     object Search : Screen("search")
     object Library : Screen("library")
+    object Kanji : Screen("kanji")
+    data class KanjiDetail(val character: String) : Screen("kanji_detail")
     object History : Screen("history")
     data class HistoryDetail(val id: Long) : Screen("history_detail")
     object Settings : Screen("settings")
@@ -68,8 +74,11 @@ sealed class Screen(val route: String) {
 
 class MainActivity : ComponentActivity() {
 
+    private var pendingKanji by mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        pendingKanji = intent?.getStringExtra(EXTRA_OPEN_KANJI)
         setContent {
             val context = LocalContext.current
             val colorConfigManager = remember { ColorConfigManager(context) }
@@ -88,8 +97,19 @@ class MainActivity : ComponentActivity() {
             }
 
             YomidroidTheme(accentColor = Color(colorConfig.accentColor)) {
-                var currentScreen by remember { mutableStateOf<Screen>(Screen.Now) }
+                var currentScreen by remember {
+                    mutableStateOf<Screen>(
+                        pendingKanji?.let { Screen.KanjiDetail(it) } ?: Screen.Now
+                    )
+                }
                 val historyState = rememberHistoryScreenState()
+
+                LaunchedEffect(pendingKanji) {
+                    pendingKanji?.let {
+                        currentScreen = Screen.KanjiDetail(it)
+                        pendingKanji = null
+                    }
+                }
 
                 when (currentScreen) {
                     Screen.AnkiSettings -> AnkiSettingsScreen(onBack = { currentScreen = Screen.Settings })
@@ -102,7 +122,16 @@ class MainActivity : ComponentActivity() {
                         val detailScreen = currentScreen as Screen.HistoryDetail
                         HistoryDetailScreen(
                             historyId = detailScreen.id,
-                            onBack = { currentScreen = Screen.History }
+                            onBack = { currentScreen = Screen.History },
+                            onOpenKanji = { ch -> currentScreen = Screen.KanjiDetail(ch) }
+                        )
+                    }
+                    is Screen.KanjiDetail -> {
+                        val detail = currentScreen as Screen.KanjiDetail
+                        KanjiDetailScreen(
+                            character = detail.character,
+                            onBack = { currentScreen = Screen.Kanji },
+                            onOpenKanji = { ch -> currentScreen = Screen.KanjiDetail(ch) }
                         )
                     }
                     else -> {
@@ -118,8 +147,20 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        intent.getStringExtra(EXTRA_OPEN_KANJI)?.let {
+            pendingKanji = it
+        }
+    }
+
     private fun openAccessibilitySettings() {
         startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+    }
+
+    companion object {
+        const val EXTRA_OPEN_KANJI = "open_kanji"
     }
 }
 
@@ -138,6 +179,8 @@ private val TOP_DESTINATIONS = listOf(
         iconSelected = Icons.Filled.Search, iconUnselected = Icons.Outlined.Search),
     TopDest(Screen.Library, "Library",
         iconSelected = Icons.Filled.MenuBook, iconUnselected = Icons.Outlined.MenuBook),
+    TopDest(Screen.Kanji, "Kanji",
+        iconSelected = Icons.Filled.GridView, iconUnselected = Icons.Outlined.GridView),
     TopDest(Screen.History, "History", iconDrawable = R.drawable.ic_history),
     TopDest(Screen.Settings, "Settings",
         iconSelected = Icons.Filled.Settings, iconUnselected = Icons.Outlined.Settings),
@@ -171,9 +214,16 @@ fun MainAppContent(
     ) { padding ->
         Box(modifier = Modifier.padding(padding)) {
             when (currentScreen) {
-                Screen.Now -> NowScreen()
-                Screen.Search -> SearchScreen()
+                Screen.Now -> NowScreen(
+                    onOpenKanji = { ch -> onNavigate(Screen.KanjiDetail(ch)) }
+                )
+                Screen.Search -> SearchScreen(
+                    onOpenKanji = { ch -> onNavigate(Screen.KanjiDetail(ch)) }
+                )
                 Screen.Library -> LibraryScreen()
+                Screen.Kanji -> KanjiGridScreen(
+                    onOpenKanji = { ch -> onNavigate(Screen.KanjiDetail(ch)) }
+                )
                 Screen.History -> HistoryScreen(
                     historyState = historyState,
                     onNavigateToDetail = { id -> onNavigate(Screen.HistoryDetail(id)) }
