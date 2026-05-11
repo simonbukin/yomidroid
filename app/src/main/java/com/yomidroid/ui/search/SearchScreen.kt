@@ -35,6 +35,7 @@ import com.yomidroid.dictionary.DictionaryEngine
 import com.yomidroid.dictionary.DictionaryEntry
 import com.yomidroid.grammar.GrammarLibrary
 import com.yomidroid.grammar.GrammarLibraryEntry
+import com.yomidroid.grammar.Romaji
 import com.yomidroid.kanji.KanjiInfo
 import com.yomidroid.kanji.KanjiLibrary
 import com.yomidroid.tts.TtsManager
@@ -44,6 +45,9 @@ import com.yomidroid.ui.components.GrammarSourcePills
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+
+private fun String.isAsciiLetters(): Boolean =
+    isNotEmpty() && all { it == ' ' || it == '-' || it == '\'' || it in 'a'..'z' || it in 'A'..'Z' }
 
 private enum class SearchFilter(val label: String) {
     All("All"),
@@ -91,9 +95,30 @@ fun SearchScreen(onOpenKanji: (String) -> Unit = {}) {
         }
         isSearching = true
         delay(300)
-        val dict = dictionaryEngine.searchTerm(query)
+
+        // If the user typed romaji ("mizu"), also try the kana variant ("みず") so
+        // dict + kanji searches — which expect kana — get a real chance to match.
+        // Grammar search already handles romaji via its pre-computed romaji index.
+        val kanaVariant = if (query.isAsciiLetters()) {
+            Romaji.romajiToHiragana(query).takeIf { it.isNotEmpty() && it != query }
+        } else null
+
+        val primaryDict = dictionaryEngine.searchTerm(query)
+        val dict: List<DictionaryEntry> = if (kanaVariant == null) {
+            primaryDict
+        } else {
+            val seen = primaryDict.mapTo(mutableSetOf()) { "${it.expression}|${it.reading}" }
+            primaryDict + dictionaryEngine.searchTerm(kanaVariant)
+                .filter { seen.add("${it.expression}|${it.reading}") }
+        }
         val grammar = grammarLibrary.search(query)
-        val kanji = withContext(Dispatchers.Default) { kanjiLibrary.search(query) }
+        val kanji = withContext(Dispatchers.Default) {
+            val primary = kanjiLibrary.search(query)
+            if (kanaVariant == null) primary else {
+                val seen = primary.mapTo(mutableSetOf()) { it.character }
+                primary + kanjiLibrary.search(kanaVariant).filter { seen.add(it.character) }
+            }
+        }
         dictResults = dict
         grammarResults = grammar
         kanjiResults = kanji
