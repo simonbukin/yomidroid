@@ -9,7 +9,8 @@ import android.content.SharedPreferences
 enum class OcrEngineType(val displayName: String, val description: String) {
     ML_KIT("ML Kit (On-Device)", "Google's fast OCR"),
     MANGA_OCR("Manga OCR", "manga-ocr model, best for manga (requires ~141MB download)"),
-    GEMINI_FLASH("Gemini Flash", "Online vision LLM. Best accuracy on stylized / pixel fonts. Requires API key.")
+    GEMINI_FLASH("Gemini Flash", "Online vision LLM. Best accuracy on stylized / pixel fonts. Requires API key."),
+    GLENS("Google Lens", "Online OCR via Google Lens. Often best on stylized / pixel fonts. No setup required.")
 }
 
 /**

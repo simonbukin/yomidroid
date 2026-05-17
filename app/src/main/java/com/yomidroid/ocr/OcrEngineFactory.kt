@@ -17,6 +17,7 @@ object OcrEngineFactory {
                 context,
                 useMlKitBounds = config.geminiUseMlKitBounds
             )
+            OcrEngineType.GLENS -> GlensOcrEngine()
         }
     }
 
