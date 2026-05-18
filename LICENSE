@@ -25,3 +25,8 @@ SOFTWARE.
 Note: The file app/src/main/java/com/yomidroid/dictionary/LanguageTransformer.kt
 is licensed under GPL-3.0, as it is a port of Yomitan's deinflection system.
 See https://github.com/yomitan/yomitan for the original source.
+
+Note: The file app/src/main/assets/kanji_similarity/yencken_top.json is derived
+from Lars Yencken's jōyō kanji confusion dataset (stroke edit distance + Yeh &
+Li radical similarity) and is distributed under CC-BY 3.0. Source:
+https://lars.yencken.org/datasets/kanji-confusion/

@@ -24,9 +24,12 @@ object EntrySerializer {
         context: Context,
         entries: List<DictionaryEntry>,
         customCss: String? = null,
-        dictionaryCssMap: Map<String, String> = emptyMap()
+        dictionaryCssMap: Map<String, String> = emptyMap(),
+        matchedText: String? = null
     ): String {
         val root = JSONObject()
+
+        if (matchedText != null) root.put("matchedText", matchedText)
 
         val nightMode = context.resources.configuration.uiMode and
                 Configuration.UI_MODE_NIGHT_MASK

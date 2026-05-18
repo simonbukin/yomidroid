@@ -16,6 +16,10 @@ var currentEntryIndex = 0;
 var totalEntries = 0;
 var entriesData = [];
 var imageBasePath = '';
+// OCR substring that triggered the current lookup. When set, long-pressing a
+// kanji in the popup opens a "swap for visually similar kanji" sheet that
+// re-runs the lookup on the corrected string.
+var currentMatchedText = '';
 
 // Safe HTML tags for structured content
 var ALLOWED_TAGS = new Set([
@@ -41,12 +45,14 @@ function setEntries(json) {
     entriesData = data.entries || [];
     totalEntries = entriesData.length;
     currentEntryIndex = 0;
+    currentMatchedText = data.matchedText || '';
 
     imageBasePath = data.imageBasePath || '';
     document.documentElement.setAttribute('data-theme', data.theme || 'dark');
     injectCustomCss(data.customCss || null);
     injectDictionaryCss(data.dictionaryCss || {});
 
+    dismissCorrectionSheet();
     renderAll();
     reportHeight();
 }
@@ -430,7 +436,8 @@ function hasKanji(text) {
 }
 
 // Append [text] to [parent] with each kanji wrapped in a tappable <span>.
-// Used in headword rendering so per-character taps can open the Kanji detail view.
+// Tap opens the Kanji detail view; long-press opens the OCR-correction sheet
+// (when currentMatchedText is set).
 function appendKanjiAwareText(parent, text) {
     for (var i = 0; i < text.length; i++) {
         var ch = text[i];
@@ -439,6 +446,7 @@ function appendKanjiAwareText(parent, text) {
             span.className = 'kanji-tap';
             span.textContent = ch;
             span.addEventListener('click', makeKanjiClickHandler(ch));
+            attachLongPress(span, ch);
             parent.appendChild(span);
         } else {
             parent.appendChild(document.createTextNode(ch));
@@ -449,12 +457,135 @@ function appendKanjiAwareText(parent, text) {
 function makeKanjiClickHandler(ch) {
     return function(ev) {
         ev.stopPropagation();
+        // A long-press already opened the correction sheet; swallow the
+        // synthetic click that follows touchend.
+        if (ev.currentTarget && ev.currentTarget.dataset.lpFired === '1') {
+            delete ev.currentTarget.dataset.lpFired;
+            ev.preventDefault();
+            return;
+        }
         try {
             if (window.YomidroidPopup && typeof window.YomidroidPopup.openKanji === 'function') {
                 window.YomidroidPopup.openKanji(ch);
             }
         } catch (_) {}
     };
+}
+
+// ============================================================
+//  OCR correction — long-press a kanji to swap for a similar one
+// ============================================================
+
+var LONG_PRESS_MS = 400;
+var LONG_PRESS_SLOP_PX = 8;
+
+function attachLongPress(el, ch) {
+    var timer = null;
+    var startX = 0, startY = 0;
+
+    function cancel() {
+        if (timer != null) { clearTimeout(timer); timer = null; }
+    }
+
+    el.addEventListener('touchstart', function(e) {
+        if (!currentMatchedText) return;
+        if (!e.touches || e.touches.length === 0) return;
+        startX = e.touches[0].clientX;
+        startY = e.touches[0].clientY;
+        cancel();
+        timer = setTimeout(function() {
+            timer = null;
+            el.dataset.lpFired = '1';
+            showCorrectionSheet(ch);
+        }, LONG_PRESS_MS);
+    }, { passive: true });
+
+    el.addEventListener('touchmove', function(e) {
+        if (timer == null || !e.touches || e.touches.length === 0) return;
+        var dx = Math.abs(e.touches[0].clientX - startX);
+        var dy = Math.abs(e.touches[0].clientY - startY);
+        if (dx > LONG_PRESS_SLOP_PX || dy > LONG_PRESS_SLOP_PX) cancel();
+    }, { passive: true });
+
+    el.addEventListener('touchend', cancel, { passive: true });
+    el.addEventListener('touchcancel', cancel, { passive: true });
+}
+
+function showCorrectionSheet(originalChar) {
+    dismissCorrectionSheet();
+    var neighbors = '';
+    try {
+        if (window.YomidroidPopup && typeof window.YomidroidPopup.requestSimilarKanji === 'function') {
+            neighbors = window.YomidroidPopup.requestSimilarKanji(originalChar) || '';
+        }
+    } catch (_) {}
+
+    var sheet = createElement('div', 'correction-sheet');
+    sheet.id = 'correction-sheet';
+
+    var header = createElement('div', 'correction-header');
+    var label = createElement('span', 'correction-label');
+    label.appendChild(document.createTextNode('Replace '));
+    var orig = createElement('span', 'correction-orig');
+    orig.textContent = originalChar;
+    label.appendChild(orig);
+    label.appendChild(document.createTextNode(' with'));
+    header.appendChild(label);
+
+    var close = createElement('button', 'correction-close');
+    close.setAttribute('aria-label', 'Close');
+    close.textContent = '×';
+    close.onclick = function(e) { e.stopPropagation(); dismissCorrectionSheet(); };
+    header.appendChild(close);
+
+    sheet.appendChild(header);
+
+    if (!neighbors) {
+        var empty = createElement('div', 'correction-empty');
+        empty.textContent = 'No suggestions.';
+        sheet.appendChild(empty);
+    } else {
+        var row = createElement('div', 'correction-row');
+        for (var i = 0; i < neighbors.length; i++) {
+            row.appendChild(makeCorrectionChip(originalChar, neighbors[i]));
+        }
+        sheet.appendChild(row);
+    }
+
+    document.body.appendChild(sheet);
+    reportHeight();
+}
+
+function makeCorrectionChip(originalChar, newChar) {
+    var chip = createElement('button', 'correction-chip');
+    chip.textContent = newChar;
+    chip.onclick = function(e) {
+        e.stopPropagation();
+        applyCorrection(originalChar, newChar);
+    };
+    return chip;
+}
+
+function dismissCorrectionSheet() {
+    var existing = document.getElementById('correction-sheet');
+    if (existing) {
+        existing.remove();
+        reportHeight();
+    }
+}
+
+function applyCorrection(originalChar, newChar) {
+    if (!currentMatchedText) { dismissCorrectionSheet(); return; }
+    var idx = currentMatchedText.indexOf(originalChar);
+    if (idx < 0) { dismissCorrectionSheet(); return; }
+    var corrected = currentMatchedText.substring(0, idx) + newChar +
+                    currentMatchedText.substring(idx + 1);
+    dismissCorrectionSheet();
+    try {
+        if (window.YomidroidPopup && typeof window.YomidroidPopup.applyCorrection === 'function') {
+            window.YomidroidPopup.applyCorrection(corrected);
+        }
+    } catch (_) {}
 }
 
 function buildFurigana(expression, reading) {

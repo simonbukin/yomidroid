@@ -16,6 +16,7 @@ import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import com.yomidroid.MainActivity
 import com.yomidroid.dictionary.DictionaryEntry
+import com.yomidroid.dictionary.KanjiSimilarity
 import com.yomidroid.tts.TtsManager
 
 /**
@@ -39,6 +40,7 @@ class OverlayPopupWebView(private val context: Context) {
     private var currentContainer: FrameLayout? = null
     private var currentEntries: List<DictionaryEntry> = emptyList()
     private var onAnkiExport: ((DictionaryEntry, Int) -> Unit)? = null
+    private var onCorrection: ((String) -> Unit)? = null
     private val handler = Handler(Looper.getMainLooper())
     private val ttsManager: TtsManager by lazy { TtsManager.getInstance(context) }
     private var isPageLoaded = false
@@ -68,16 +70,25 @@ class OverlayPopupWebView(private val context: Context) {
         maxWidth: Int,
         maxHeight: Int,
         customCss: String?,
-        onAnkiExport: (DictionaryEntry, Int) -> Unit
+        onAnkiExport: (DictionaryEntry, Int) -> Unit,
+        onCorrection: ((String) -> Unit)? = null
     ) {
         if (entries.isEmpty()) return
 
         this.currentContainer = container
         this.currentEntries = entries
         this.onAnkiExport = onAnkiExport
+        this.onCorrection = onCorrection
         this.maxPopupWidth = maxWidth
         this.maxPopupHeight = maxHeight
         this.textBounds = Rect(textBounds)
+
+        // Preload similarity table off the JS thread so requestSimilarKanji is cheap.
+        if (onCorrection != null) {
+            try { KanjiSimilarity.ensureLoaded(context) } catch (e: Exception) {
+                Log.w(TAG, "Failed to preload kanji similarity table: ${e.message}")
+            }
+        }
 
         val wv = getOrCreateWebView(container)
 
@@ -276,8 +287,10 @@ class OverlayPopupWebView(private val context: Context) {
      * Serialize dictionary entries to JSON for the popup JS renderer.
      */
     private fun serializeEntries(entries: List<DictionaryEntry>, customCss: String?): String {
+        val matched = entries.firstOrNull()?.matchedText
         return com.yomidroid.dictionary.EntrySerializer.serialize(
-            context, entries, customCss, dictionaryCssMap
+            context, entries, customCss, dictionaryCssMap,
+            matchedText = if (onCorrection != null) matched else null
         )
     }
 
@@ -327,6 +340,24 @@ class OverlayPopupWebView(private val context: Context) {
                 }
                 context.startActivity(intent)
             }
+        }
+
+        /**
+         * Synchronously return the visually similar neighbors of [character]
+         * as a single concatenated string (one char per neighbor, up to ~8).
+         * Called on the WebView JS thread; the table is preloaded in show().
+         */
+        @JavascriptInterface
+        fun requestSimilarKanji(character: String): String {
+            val ch = character.firstOrNull() ?: return ""
+            return KanjiSimilarity.neighbors(ch).joinToString("")
+        }
+
+        @JavascriptInterface
+        fun applyCorrection(correctedText: String) {
+            val cb = onCorrection ?: return
+            if (correctedText.isEmpty()) return
+            handler.post { cb(correctedText) }
         }
     }
 }

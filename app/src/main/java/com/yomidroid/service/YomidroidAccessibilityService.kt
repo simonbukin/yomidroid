@@ -1139,6 +1139,9 @@ class YomidroidAccessibilityService : AccessibilityService() {
                                 onAnkiExport = { entry, index ->
                                     val sentence = ocrResult.text
                                     exportToAnki(entry, sentence, popupIndex = index)
+                                },
+                                onCorrection = { corrected ->
+                                    handleCorrection(corrected, ocrResult, unifiedIndex, textBounds)
                                 }
                             )
                         }
@@ -1329,6 +1332,9 @@ class YomidroidAccessibilityService : AccessibilityService() {
                     customCss = null,
                     onAnkiExport = { entry, index ->
                         exportToAnki(entry, ocrResult.text, popupIndex = index)
+                    },
+                    onCorrection = { corrected ->
+                        handleCorrection(corrected, ocrResult, lastLookedUpIndex, textBounds)
                     }
                 )
             }
@@ -1342,6 +1348,50 @@ class YomidroidAccessibilityService : AccessibilityService() {
             overlay.richPopupActive = false
             overlayPopupWebView?.hide()
             overlay.showDefinitionsAtCursor(entries, cursorX, cursorY)
+        }
+    }
+
+    /**
+     * Re-run the dictionary lookup with [correctedText] after the user swapped
+     * a kanji via the popup's long-press correction sheet, and refresh both
+     * the highlight and the popup in place.
+     *
+     * Keeps the original [textBounds] for popup placement so the popup stays
+     * anchored to the same screen region the user is reading. The on-screen
+     * highlight updates to the new match length.
+     */
+    private fun handleCorrection(
+        correctedText: String,
+        ocrResult: OcrResult,
+        unifiedIndex: Int,
+        textBounds: Rect
+    ) {
+        serviceScope.launch {
+            val entries = dictionaryEngineRef.get()?.findTerms(correctedText) ?: emptyList()
+            if (entries.isEmpty()) return@launch
+            val firstEntry = entries.first()
+            val matchLen = firstEntry.matchedText.length
+            withContext(Dispatchers.Main) {
+                val ctx = unifiedContext ?: return@withContext
+                val container = overlayContainer ?: return@withContext
+                if (unifiedIndex >= 0) {
+                    overlayView?.setHighlightFromUnified(ctx, unifiedIndex, matchLen)
+                }
+                overlayPopupWebView?.show(
+                    container = container,
+                    entries = entries,
+                    textBounds = textBounds,
+                    maxWidth = (screenWidth * 0.9f).toInt(),
+                    maxHeight = (screenHeight * 0.65f).toInt(),
+                    customCss = null,
+                    onAnkiExport = { entry, index ->
+                        exportToAnki(entry, ocrResult.text, popupIndex = index)
+                    },
+                    onCorrection = { again ->
+                        handleCorrection(again, ocrResult, unifiedIndex, textBounds)
+                    }
+                )
+            }
         }
     }
 

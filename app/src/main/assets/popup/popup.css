@@ -448,8 +448,82 @@ a, .sc-a {
     cursor: pointer;
     border-radius: 2px;
     transition: background 0.1s ease;
+    -webkit-touch-callout: none;
 }
 .kanji-tap:active,
 .kanji-tap:hover {
     background: rgba(130, 180, 255, 0.18);
+}
+
+/* ============================================================
+   OCR correction sheet (long-press a kanji → swap)
+   ============================================================ */
+.correction-sheet {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: var(--bg-color);
+    border-top: 1px solid var(--border-color);
+    box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.3);
+    padding: 0.5em 0.6em 0.6em;
+    z-index: 1000;
+}
+.correction-header {
+    display: flex;
+    align-items: center;
+    margin-bottom: 0.4em;
+}
+.correction-label {
+    font-size: 0.85em;
+    color: var(--rt-color);
+    flex: 1;
+}
+.correction-orig {
+    color: var(--text-color);
+    font-weight: 700;
+    font-size: 1.2em;
+    margin: 0 0.2em;
+    vertical-align: middle;
+}
+.correction-close {
+    background: none;
+    border: none;
+    color: var(--rt-color);
+    font-size: 1.4em;
+    line-height: 1;
+    width: 1.8em;
+    height: 1.8em;
+    border-radius: 50%;
+    cursor: pointer;
+    padding: 0;
+}
+.correction-close:active {
+    background: rgba(255, 255, 255, 0.08);
+}
+.correction-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4em;
+}
+.correction-chip {
+    flex: 0 0 auto;
+    min-width: 2.2em;
+    height: 2.2em;
+    padding: 0 0.5em;
+    background: rgba(130, 180, 255, 0.12);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-color);
+    font-size: 1.4em;
+    font-weight: 600;
+    cursor: pointer;
+}
+.correction-chip:active {
+    background: rgba(130, 180, 255, 0.3);
+}
+.correction-empty {
+    font-size: 0.85em;
+    color: var(--rt-color);
+    font-style: italic;
 }
