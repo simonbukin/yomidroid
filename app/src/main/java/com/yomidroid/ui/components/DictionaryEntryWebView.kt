@@ -17,6 +17,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.yomidroid.dictionary.DictionaryEntry
 import com.yomidroid.dictionary.EntrySerializer
+import com.yomidroid.dictionary.KanjiSimilarity
 import com.yomidroid.tts.TtsManager
 
 /**
@@ -30,12 +31,28 @@ class DictionaryWebViewController {
     internal var entries: List<DictionaryEntry> = emptyList()
     internal var onAnkiExport: ((DictionaryEntry, Int) -> Unit)? = null
     internal var onOpenKanji: ((String) -> Unit)? = null
+    internal var onCorrection: ((String) -> Unit)? = null
+    internal var onRequestRanking: ((Char) -> Unit)? = null
 
     fun setAnkiResult(index: Int, status: String) {
         val wv = webView ?: return
         val safeStatus = status.replace("'", "")
         wv.post {
             wv.evaluateJavascript("setAnkiResult($index, '$safeStatus')", null)
+        }
+    }
+
+    /** Push the result of an async correction-candidate ranking into the WebView. */
+    fun setCorrectionRanking(originalChar: Char, ranked: List<Pair<Char, Int>>) {
+        val wv = webView ?: return
+        val arr = org.json.JSONArray()
+        for ((c, n) in ranked) {
+            arr.put(org.json.JSONObject().put("k", c.toString()).put("n", n))
+        }
+        val origQ = org.json.JSONObject.quote(originalChar.toString())
+        val rankedQ = org.json.JSONObject.quote(arr.toString())
+        wv.post {
+            wv.evaluateJavascript("setCorrectionRanking($origQ, $rankedQ)", null)
         }
     }
 }
@@ -56,13 +73,26 @@ fun DictionaryEntryWebView(
     dictionaryCssMap: Map<String, String> = emptyMap(),
     onAnkiExport: ((DictionaryEntry, Int) -> Unit)? = null,
     onOpenKanji: ((String) -> Unit)? = null,
+    onCorrection: ((String) -> Unit)? = null,
+    onRequestRanking: ((Char) -> Unit)? = null,
+    matchedText: String? = null,
+    originalMatchedText: String? = null,
     controller: DictionaryWebViewController = rememberDictionaryWebViewController(),
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
 
-    val json = remember(entries, customCss, dictionaryCssMap) {
-        EntrySerializer.serialize(context, entries, customCss, dictionaryCssMap)
+    val json = remember(entries, customCss, dictionaryCssMap, matchedText, originalMatchedText, onCorrection != null) {
+        val mt = if (onCorrection != null) matchedText else null
+        val omt = if (onCorrection != null) (originalMatchedText ?: matchedText) else null
+        EntrySerializer.serialize(context, entries, customCss, dictionaryCssMap, mt, omt)
+    }
+
+    // Preload the kanji-similarity table off the JS thread when correction is wired.
+    LaunchedEffect(onCorrection) {
+        if (onCorrection != null) {
+            try { KanjiSimilarity.ensureLoaded(context.applicationContext) } catch (_: Exception) {}
+        }
     }
 
     var contentHeight by remember { mutableIntStateOf(200) }
@@ -73,6 +103,8 @@ fun DictionaryEntryWebView(
         controller.entries = entries
         controller.onAnkiExport = onAnkiExport
         controller.onOpenKanji = onOpenKanji
+        controller.onCorrection = onCorrection
+        controller.onRequestRanking = onRequestRanking
     }
 
     AndroidView(
@@ -155,5 +187,23 @@ private class DictionaryWebViewBridge(
     @JavascriptInterface
     fun openKanji(character: String) {
         mainHandler.post { controller.onOpenKanji?.invoke(character) }
+    }
+
+    @JavascriptInterface
+    fun requestSimilarKanji(character: String): String {
+        val ch = character.firstOrNull() ?: return ""
+        return KanjiSimilarity.neighbors(ch).joinToString("")
+    }
+
+    @JavascriptInterface
+    fun applyCorrection(correctedText: String) {
+        if (correctedText.isEmpty()) return
+        mainHandler.post { controller.onCorrection?.invoke(correctedText) }
+    }
+
+    @JavascriptInterface
+    fun requestCorrectionRanking(originalChar: String) {
+        val ch = originalChar.firstOrNull() ?: return
+        mainHandler.post { controller.onRequestRanking?.invoke(ch) }
     }
 }

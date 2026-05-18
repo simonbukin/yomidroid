@@ -28,19 +28,32 @@ object LookupResultRepository {
     private val _latestScreenshotPath = MutableStateFlow<String?>(null)
     val latestScreenshotPath: StateFlow<String?> = _latestScreenshotPath.asStateFlow()
 
+    // Current OCR substring the displayed entries were looked up against. Used
+    // to drive the popup's kanji-correction UI in decoupled mode.
+    private val _latestMatchedText = MutableStateFlow<String?>(null)
+    val latestMatchedText: StateFlow<String?> = _latestMatchedText.asStateFlow()
+
+    // The matched text from the *first* lookup in this session. Drives the
+    // "← original" reset affordance after one or more corrections.
+    private val _latestOriginalMatchedText = MutableStateFlow<String?>(null)
+    val latestOriginalMatchedText: StateFlow<String?> = _latestOriginalMatchedText.asStateFlow()
+
     /**
-     * Update the live-lookup state. If [context] and [screenshot] are provided,
-     * the bitmap is persisted to a stable file under filesDir so the Live Lookup
-     * UI can attach it at Anki-export time. Pass null to clear the screenshot.
+     * Update the live-lookup state for a fresh lookup. Resets the
+     * original-matched-text marker to [matchedText] so subsequent
+     * corrections can return to this baseline.
      */
     fun updateEntries(
         entries: List<DictionaryEntry>,
         sentence: String?,
         context: Context? = null,
-        screenshot: Bitmap? = null
+        screenshot: Bitmap? = null,
+        matchedText: String? = null
     ) {
         _latestEntries.value = entries
         _latestSentence.value = sentence
+        _latestMatchedText.value = matchedText
+        _latestOriginalMatchedText.value = matchedText
         if (context != null) {
             _latestScreenshotPath.value = if (screenshot != null) {
                 writeScreenshot(context, screenshot)
@@ -50,10 +63,25 @@ object LookupResultRepository {
         }
     }
 
+    /**
+     * Update entries from an in-popup correction. Keeps the existing
+     * original-matched-text marker so the "← original" affordance still
+     * points back to the first lookup of this session.
+     */
+    fun updateEntriesFromCorrection(
+        entries: List<DictionaryEntry>,
+        matchedText: String
+    ) {
+        _latestEntries.value = entries
+        _latestMatchedText.value = matchedText
+    }
+
     fun clear() {
         _latestEntries.value = emptyList()
         _latestSentence.value = null
         _latestScreenshotPath.value = null
+        _latestMatchedText.value = null
+        _latestOriginalMatchedText.value = null
     }
 
     private fun writeScreenshot(context: Context, bitmap: Bitmap): String? {

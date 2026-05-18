@@ -214,9 +214,41 @@ private fun LookupTab(onOpenKanji: ((String) -> Unit)? = null) {
     val entries by LookupResultRepository.latestEntries.collectAsState()
     val sentence by LookupResultRepository.latestSentence.collectAsState()
     val screenshotPath by LookupResultRepository.latestScreenshotPath.collectAsState()
+    val matchedText by LookupResultRepository.latestMatchedText.collectAsState()
+    val originalMatchedText by LookupResultRepository.latestOriginalMatchedText.collectAsState()
     val ankiExporter = remember { AnkiDroidExporter(context) }
     val scope = rememberCoroutineScope()
     val webViewController = rememberDictionaryWebViewController()
+    val dictionaryEngine = remember { DictionaryEngine(context) }
+
+    fun applyCorrection(corrected: String) {
+        scope.launch {
+            val newEntries = withContext(Dispatchers.IO) { dictionaryEngine.findTerms(corrected) }
+            if (newEntries.isNotEmpty()) {
+                LookupResultRepository.updateEntriesFromCorrection(
+                    entries = newEntries,
+                    matchedText = newEntries.first().matchedText
+                )
+            }
+        }
+    }
+
+    fun computeRanking(originalChar: Char) {
+        val base = matchedText ?: return
+        val pos = base.indexOf(originalChar)
+        if (pos < 0) return
+        val neighbors = com.yomidroid.dictionary.KanjiSimilarity.neighbors(originalChar)
+        if (neighbors.isEmpty()) return
+        scope.launch {
+            val ranked = withContext(Dispatchers.IO) {
+                neighbors.map { c ->
+                    val corrected = base.substring(0, pos) + c + base.substring(pos + 1)
+                    c to dictionaryEngine.findTerms(corrected).size
+                }.sortedByDescending { it.second }
+            }
+            webViewController.setCorrectionRanking(originalChar, ranked)
+        }
+    }
 
     fun exportEntry(entry: DictionaryEntry, index: Int) {
         scope.launch {
@@ -264,6 +296,10 @@ private fun LookupTab(onOpenKanji: ((String) -> Unit)? = null) {
                 entries = entries,
                 onAnkiExport = { entry, index -> exportEntry(entry, index) },
                 onOpenKanji = onOpenKanji,
+                onCorrection = { corrected -> applyCorrection(corrected) },
+                onRequestRanking = { ch -> computeRanking(ch) },
+                matchedText = matchedText,
+                originalMatchedText = originalMatchedText,
                 controller = webViewController,
                 modifier = Modifier.fillMaxWidth()
             )

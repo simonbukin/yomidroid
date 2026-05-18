@@ -456,7 +456,56 @@ a, .sc-a {
 }
 
 /* ============================================================
-   OCR correction sheet (long-press a kanji → swap)
+   OCR correction toolbar (discoverable header above all entries)
+   ============================================================ */
+.correction-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0.4em;
+    padding: 0.35em 0.6em;
+    border-bottom: 1px solid var(--light-border-color);
+    background: rgba(255, 255, 255, 0.02);
+}
+.correction-toolbar-spacer { flex: 1; }
+.correction-reset {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25em;
+    background: rgba(130, 180, 255, 0.1);
+    border: 1px solid var(--border-color);
+    color: var(--accent-color);
+    padding: 0.2em 0.6em;
+    border-radius: 12px;
+    font-size: 0.78em;
+    font-weight: 600;
+    cursor: pointer;
+    max-width: 60%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 0 1 auto;
+    margin-right: auto;
+}
+.correction-reset:active { background: rgba(130, 180, 255, 0.22); }
+.correction-edit {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3em;
+    background: none;
+    border: 1px solid var(--border-color);
+    color: var(--accent-color);
+    padding: 0.25em 0.6em 0.25em 0.5em;
+    border-radius: 12px;
+    font-size: 0.78em;
+    font-weight: 600;
+    cursor: pointer;
+    flex: 0 0 auto;
+}
+.correction-edit:active { background: rgba(130, 180, 255, 0.18); }
+.correction-edit-label { line-height: 1; }
+
+/* ============================================================
+   OCR correction sheet (pick-a-kanji + replace-with chips)
    ============================================================ */
 .correction-sheet {
     position: fixed;
@@ -508,19 +557,40 @@ a, .sc-a {
 }
 .correction-chip {
     flex: 0 0 auto;
-    min-width: 2.2em;
-    height: 2.2em;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.2em;
+    min-width: 2.4em;
+    height: 2.4em;
     padding: 0 0.5em;
     background: rgba(130, 180, 255, 0.12);
     border: 1px solid var(--border-color);
     border-radius: 6px;
     color: var(--text-color);
-    font-size: 1.4em;
+    font-size: 1.3em;
     font-weight: 600;
     cursor: pointer;
 }
-.correction-chip:active {
-    background: rgba(130, 180, 255, 0.3);
+.correction-chip:active { background: rgba(130, 180, 255, 0.3); }
+.correction-chip-glyph { font-size: 1em; }
+.correction-chip-count {
+    font-size: 0.55em;
+    font-weight: 600;
+    color: var(--rt-color);
+    background: rgba(255, 255, 255, 0.08);
+    padding: 0.1em 0.35em;
+    border-radius: 8px;
+    line-height: 1.2;
+}
+.correction-chip-empty {
+    opacity: 0.45;
+}
+.correction-chip-empty .correction-chip-count { display: none; }
+.correction-chip-loading {
+    opacity: 0.7;
+}
+.correction-chip-picker {
+    background: rgba(255, 255, 255, 0.06);
 }
 .correction-empty {
     font-size: 0.85em;

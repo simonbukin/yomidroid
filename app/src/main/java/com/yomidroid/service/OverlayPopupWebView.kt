@@ -39,8 +39,10 @@ class OverlayPopupWebView(private val context: Context) {
     private var webView: WebView? = null
     private var currentContainer: FrameLayout? = null
     private var currentEntries: List<DictionaryEntry> = emptyList()
+    private var currentMatchedText: String? = null
     private var onAnkiExport: ((DictionaryEntry, Int) -> Unit)? = null
     private var onCorrection: ((String) -> Unit)? = null
+    private var onRequestRanking: ((Char) -> Unit)? = null
     private val handler = Handler(Looper.getMainLooper())
     private val ttsManager: TtsManager by lazy { TtsManager.getInstance(context) }
     private var isPageLoaded = false
@@ -55,6 +57,10 @@ class OverlayPopupWebView(private val context: Context) {
     private var maxPopupWidth: Int = 0
     private var maxPopupHeight: Int = 0
     private var textBounds: Rect = Rect()
+
+    // The matched text from the very first lookup in this session; threaded
+    // into the JSON payload so the popup can expose a "← original" reset.
+    private var pendingOriginalMatchedText: String? = null
 
     val isVisible: Boolean get() = webView?.visibility == View.VISIBLE
 
@@ -71,17 +77,22 @@ class OverlayPopupWebView(private val context: Context) {
         maxHeight: Int,
         customCss: String?,
         onAnkiExport: (DictionaryEntry, Int) -> Unit,
-        onCorrection: ((String) -> Unit)? = null
+        onCorrection: ((String) -> Unit)? = null,
+        originalMatchedText: String? = null,
+        onRequestRanking: ((Char) -> Unit)? = null
     ) {
         if (entries.isEmpty()) return
 
         this.currentContainer = container
         this.currentEntries = entries
+        this.currentMatchedText = entries.firstOrNull()?.matchedText
         this.onAnkiExport = onAnkiExport
         this.onCorrection = onCorrection
+        this.onRequestRanking = onRequestRanking
         this.maxPopupWidth = maxWidth
         this.maxPopupHeight = maxHeight
         this.textBounds = Rect(textBounds)
+        this.pendingOriginalMatchedText = originalMatchedText ?: currentMatchedText
 
         // Preload similarity table off the JS thread so requestSimilarKanji is cheap.
         if (onCorrection != null) {
@@ -288,10 +299,28 @@ class OverlayPopupWebView(private val context: Context) {
      */
     private fun serializeEntries(entries: List<DictionaryEntry>, customCss: String?): String {
         val matched = entries.firstOrNull()?.matchedText
+        val correctionOn = onCorrection != null
         return com.yomidroid.dictionary.EntrySerializer.serialize(
             context, entries, customCss, dictionaryCssMap,
-            matchedText = if (onCorrection != null) matched else null
+            matchedText = if (correctionOn) matched else null,
+            originalMatchedText = if (correctionOn) pendingOriginalMatchedText else null
         )
+    }
+
+    /**
+     * Push the result of an async correction-candidate ranking back into the
+     * open popup. [ranked] is the list of `(neighbor, hitCount)` pairs sorted
+     * by descending hit count. JS reorders the sheet chips in place and adds
+     * count badges.
+     */
+    fun setCorrectionRanking(originalChar: Char, ranked: List<Pair<Char, Int>>) {
+        val arr = org.json.JSONArray()
+        for ((c, n) in ranked) {
+            arr.put(org.json.JSONObject().put("k", c.toString()).put("n", n))
+        }
+        val origQ = org.json.JSONObject.quote(originalChar.toString())
+        val rankedQ = org.json.JSONObject.quote(arr.toString())
+        webView?.evaluateJavascript("setCorrectionRanking($origQ, $rankedQ)", null)
     }
 
     private fun resizeToContent(contentHeightPx: Int) {
@@ -358,6 +387,13 @@ class OverlayPopupWebView(private val context: Context) {
             val cb = onCorrection ?: return
             if (correctedText.isEmpty()) return
             handler.post { cb(correctedText) }
+        }
+
+        @JavascriptInterface
+        fun requestCorrectionRanking(originalChar: String) {
+            val cb = onRequestRanking ?: return
+            val ch = originalChar.firstOrNull() ?: return
+            handler.post { cb(ch) }
         }
     }
 }
