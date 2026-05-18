@@ -119,6 +119,14 @@ class YomidroidAccessibilityService : AccessibilityService() {
 
     // Keep clean screenshot for Anki export
     private var currentScreenshot: Bitmap? = null
+
+    // Cached so an in-app "Edit OCR" tap (decoupled mode, where the overlay
+    // popup is never shown and can't fire the bridge) can still trigger a
+    // tight screenshot crop for the edit surface.
+    private var lastShownTextBounds: Rect? = null
+    private var lastShownEntries: List<com.yomidroid.dictionary.DictionaryEntry> = emptyList()
+    private var lastShownOcrText: String = ""
+    private var lastShownOriginalMatched: String = ""
     // Original screenshot dimensions (before scaling) for coordinate mapping
     private var originalScreenshotWidth = 0
     private var originalScreenshotHeight = 0
@@ -941,6 +949,10 @@ class YomidroidAccessibilityService : AccessibilityService() {
         originalScreenshotWidth = 0
         originalScreenshotHeight = 0
         charGrid = emptyList()
+        lastShownTextBounds = null
+        lastShownEntries = emptyList()
+        lastShownOcrText = ""
+        lastShownOriginalMatched = ""
 
         // Reset cursor toggle, popup lock, and joystick/hat state
         popupLocked = false
@@ -1121,12 +1133,18 @@ class YomidroidAccessibilityService : AccessibilityService() {
 
                         val textBounds = buildTextBounds(context, unifiedIndex, matchLen, sx, sy)
 
+                        val originalMatched = firstEntry.matchedText
+                        lastShownTextBounds = Rect(textBounds)
+                        lastShownEntries = entries
+                        lastShownOcrText = ocrResult.text
+                        lastShownOriginalMatched = originalMatched
                         if (isDecoupledMode) {
                             LookupResultRepository.updateEntries(
                                 entries = entries,
                                 sentence = ocrResult.text,
                                 context = this@YomidroidAccessibilityService,
-                                screenshot = currentScreenshot
+                                screenshot = currentScreenshot,
+                                matchedText = originalMatched
                             )
                         } else {
                             overlayPopupWebView?.show(
@@ -1139,6 +1157,16 @@ class YomidroidAccessibilityService : AccessibilityService() {
                                 onAnkiExport = { entry, index ->
                                     val sentence = ocrResult.text
                                     exportToAnki(entry, sentence, popupIndex = index)
+                                },
+                                onCorrection = { corrected ->
+                                    handleCorrection(corrected, ocrResult, unifiedIndex, textBounds, originalMatched)
+                                },
+                                originalMatchedText = originalMatched,
+                                onRequestRanking = { ch ->
+                                    computeCorrectionRanking(ch, originalMatched)
+                                },
+                                onEditOcrInApp = {
+                                    handleEditOcrInApp(entries, ocrResult.text, originalMatched, textBounds)
                                 }
                             )
                         }
@@ -1312,12 +1340,18 @@ class YomidroidAccessibilityService : AccessibilityService() {
                 )
             }
 
+            val originalMatched = entries.firstOrNull()?.matchedText.orEmpty()
+            lastShownTextBounds = Rect(textBounds)
+            lastShownEntries = entries
+            lastShownOcrText = ocrResult.text
+            lastShownOriginalMatched = originalMatched
             if (isDecoupledMode) {
                 LookupResultRepository.updateEntries(
                     entries = entries,
                     sentence = ocrResult.text,
                     context = this@YomidroidAccessibilityService,
-                    screenshot = currentScreenshot
+                    screenshot = currentScreenshot,
+                    matchedText = originalMatched.ifEmpty { null }
                 )
             } else {
                 overlayPopupWebView?.show(
@@ -1329,6 +1363,16 @@ class YomidroidAccessibilityService : AccessibilityService() {
                     customCss = null,
                     onAnkiExport = { entry, index ->
                         exportToAnki(entry, ocrResult.text, popupIndex = index)
+                    },
+                    onCorrection = { corrected ->
+                        handleCorrection(corrected, ocrResult, lastLookedUpIndex, textBounds, originalMatched)
+                    },
+                    originalMatchedText = originalMatched,
+                    onRequestRanking = { ch ->
+                        computeCorrectionRanking(ch, originalMatched)
+                    },
+                    onEditOcrInApp = {
+                        handleEditOcrInApp(entries, ocrResult.text, originalMatched, textBounds)
                     }
                 )
             }
@@ -1342,6 +1386,131 @@ class YomidroidAccessibilityService : AccessibilityService() {
             overlay.richPopupActive = false
             overlayPopupWebView?.hide()
             overlay.showDefinitionsAtCursor(entries, cursorX, cursorY)
+        }
+    }
+
+    /**
+     * Re-run the dictionary lookup with [correctedText] after the user swapped
+     * a kanji via the popup's correction sheet, and refresh both the highlight
+     * and the popup in place.
+     *
+     * Keeps the original [textBounds] for popup placement so the popup stays
+     * anchored to the same screen region the user is reading, and threads
+     * [originalMatchedText] so the popup can still surface the "← original"
+     * reset affordance after chained corrections.
+     */
+    private fun handleCorrection(
+        correctedText: String,
+        ocrResult: OcrResult,
+        unifiedIndex: Int,
+        textBounds: Rect,
+        originalMatchedText: String
+    ) {
+        serviceScope.launch {
+            val entries = dictionaryEngineRef.get()?.findTerms(correctedText) ?: emptyList()
+            if (entries.isEmpty()) return@launch
+            val firstEntry = entries.first()
+            val matchLen = firstEntry.matchedText.length
+            withContext(Dispatchers.Main) {
+                val ctx = unifiedContext ?: return@withContext
+                val container = overlayContainer ?: return@withContext
+                if (unifiedIndex >= 0) {
+                    overlayView?.setHighlightFromUnified(ctx, unifiedIndex, matchLen)
+                }
+                lastShownEntries = entries
+                lastShownOcrText = ocrResult.text
+                if (isDecoupledMode) {
+                    LookupResultRepository.updateEntriesFromCorrection(entries, firstEntry.matchedText)
+                } else {
+                    overlayPopupWebView?.show(
+                        container = container,
+                        entries = entries,
+                        textBounds = textBounds,
+                        maxWidth = (screenWidth * 0.9f).toInt(),
+                        maxHeight = (screenHeight * 0.65f).toInt(),
+                        customCss = null,
+                        onAnkiExport = { entry, index ->
+                            exportToAnki(entry, ocrResult.text, popupIndex = index)
+                        },
+                        onCorrection = { again ->
+                            handleCorrection(again, ocrResult, unifiedIndex, textBounds, originalMatchedText)
+                        },
+                        originalMatchedText = originalMatchedText,
+                        onRequestRanking = { ch ->
+                            computeCorrectionRanking(ch, firstEntry.matchedText)
+                        },
+                        onEditOcrInApp = {
+                            handleEditOcrInApp(entries, ocrResult.text, originalMatchedText, textBounds)
+                        }
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Promote the current overlay lookup to the in-app Now → Lookup tab so the
+     * user can edit the OCR text with a normal Compose IME (not constrained by
+     * the accessibility-overlay window's focus rules). The full source
+     * screenshot is what the edit panel displays — and what Anki export
+     * attaches — so [textBounds] is no longer used here.
+     */
+    private fun handleEditOcrInApp(
+        entries: List<com.yomidroid.dictionary.DictionaryEntry>,
+        ocrText: String,
+        originalMatchedText: String,
+        @Suppress("UNUSED_PARAMETER") textBounds: Rect
+    ) {
+        LookupResultRepository.updateEntries(
+            entries = entries,
+            sentence = ocrText,
+            context = this,
+            screenshot = currentScreenshot,
+            matchedText = entries.firstOrNull()?.matchedText,
+            originalMatchedText = originalMatchedText
+        )
+        LookupResultRepository.startEditMode()
+        overlayPopupWebView?.hide()
+
+        val intent = Intent(this, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        }
+        try {
+            startActivity(intent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to launch MainActivity for OCR edit: ${e.message}")
+        }
+    }
+
+    /**
+     * Entry point used by the in-app Lookup tab in decoupled mode, where the
+     * overlay popup never appears and so the JS bridge can't be the trigger.
+     */
+    fun startOcrEditFromInApp() {
+        LookupResultRepository.startEditMode()
+    }
+
+    /**
+     * For each visually-similar neighbor of [originalChar], substitute it into
+     * [matchedText] at the first occurrence of [originalChar], run a full
+     * dictionary lookup, and report back the hit counts so the popup can sort
+     * its suggestion chips by usefulness.
+     */
+    private fun computeCorrectionRanking(originalChar: Char, matchedText: String) {
+        val pos = matchedText.indexOf(originalChar)
+        if (pos < 0) return
+        val neighbors = com.yomidroid.dictionary.KanjiSimilarity.neighbors(originalChar)
+        if (neighbors.isEmpty()) return
+        val engine = dictionaryEngineRef.get() ?: return
+        serviceScope.launch {
+            val ranked = neighbors.map { c ->
+                val corrected = matchedText.substring(0, pos) + c + matchedText.substring(pos + 1)
+                val entries = engine.findTerms(corrected)
+                c to entries.size
+            }.sortedByDescending { it.second }
+            withContext(Dispatchers.Main) {
+                overlayPopupWebView?.setCorrectionRanking(originalChar, ranked)
+            }
         }
     }
 

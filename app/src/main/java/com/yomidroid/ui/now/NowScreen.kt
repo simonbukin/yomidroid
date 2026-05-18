@@ -17,6 +17,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Refresh
@@ -55,7 +57,12 @@ import com.yomidroid.ui.components.DictionaryEntryWebView
 import com.yomidroid.ui.components.GrammarResourceTextButton
 import com.yomidroid.ui.components.GrammarSourcePills
 import com.yomidroid.ui.components.rememberDictionaryWebViewController
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.foundation.Image
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -109,13 +116,18 @@ fun NowScreen(onOpenKanji: ((String) -> Unit)? = null) {
     val onInteracted: () -> Unit = { userInteracted = true }
     val showFreshScanBanner = hasFreshScan && userInteracted
 
-    // Lookup tab is only meaningful in decoupled mode (overlay popup is suppressed there).
-    // In non-decoupled mode, dictionary entries appear in the overlay popup itself.
-    val visibleTabs = remember(isDecoupledMode) {
-        if (isDecoupledMode) NowTab.entries.toList()
+    // Lookup tab is only meaningful in decoupled mode (overlay popup is suppressed
+    // there). In coupled mode it's normally hidden — except while the OCR edit
+    // surface is active, since that's where the user just got promoted to.
+    val ocrEditActive by LookupResultRepository.editModeActive.collectAsState()
+    val visibleTabs = remember(isDecoupledMode, ocrEditActive) {
+        if (isDecoupledMode || ocrEditActive) NowTab.entries.toList()
         else listOf(NowTab.PARSE, NowTab.TRANSLATE)
     }
     var selectedTab by remember(visibleTabs) { mutableStateOf(visibleTabs.first()) }
+    LaunchedEffect(ocrEditActive) {
+        if (ocrEditActive) selectedTab = NowTab.LOOKUP
+    }
 
     Scaffold(
         topBar = {
@@ -214,9 +226,46 @@ private fun LookupTab(onOpenKanji: ((String) -> Unit)? = null) {
     val entries by LookupResultRepository.latestEntries.collectAsState()
     val sentence by LookupResultRepository.latestSentence.collectAsState()
     val screenshotPath by LookupResultRepository.latestScreenshotPath.collectAsState()
+    val matchedText by LookupResultRepository.latestMatchedText.collectAsState()
+    val originalMatchedText by LookupResultRepository.latestOriginalMatchedText.collectAsState()
+    val editModeActive by LookupResultRepository.editModeActive.collectAsState()
     val ankiExporter = remember { AnkiDroidExporter(context) }
     val scope = rememberCoroutineScope()
     val webViewController = rememberDictionaryWebViewController()
+    val dictionaryEngine = remember { DictionaryEngine(context) }
+
+    fun applyCorrection(corrected: String) {
+        scope.launch {
+            val newEntries = withContext(Dispatchers.IO) { dictionaryEngine.findTerms(corrected) }
+            if (newEntries.isNotEmpty()) {
+                LookupResultRepository.updateEntriesFromCorrection(
+                    entries = newEntries,
+                    matchedText = newEntries.first().matchedText
+                )
+            }
+        }
+    }
+
+    fun startEditFromInApp() {
+        LookupResultRepository.startEditMode()
+    }
+
+    fun computeRanking(originalChar: Char) {
+        val base = matchedText ?: return
+        val pos = base.indexOf(originalChar)
+        if (pos < 0) return
+        val neighbors = com.yomidroid.dictionary.KanjiSimilarity.neighbors(originalChar)
+        if (neighbors.isEmpty()) return
+        scope.launch {
+            val ranked = withContext(Dispatchers.IO) {
+                neighbors.map { c ->
+                    val corrected = base.substring(0, pos) + c + base.substring(pos + 1)
+                    c to dictionaryEngine.findTerms(corrected).size
+                }.sortedByDescending { it.second }
+            }
+            webViewController.setCorrectionRanking(originalChar, ranked)
+        }
+    }
 
     fun exportEntry(entry: DictionaryEntry, index: Int) {
         scope.launch {
@@ -248,7 +297,7 @@ private fun LookupTab(onOpenKanji: ((String) -> Unit)? = null) {
         }
     }
 
-    if (entries.isEmpty()) {
+    if (entries.isEmpty() && !editModeActive) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text(
                 text = "Tap text in the overlay to see results here",
@@ -260,10 +309,23 @@ private fun LookupTab(onOpenKanji: ((String) -> Unit)? = null) {
         }
     } else {
         Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+            if (editModeActive) {
+                OcrEditPanel(
+                    initialText = matchedText.orEmpty(),
+                    screenshotPath = screenshotPath,
+                    onTextChange = { text -> applyCorrection(text) },
+                    onClose = { LookupResultRepository.endEditMode() }
+                )
+            }
             DictionaryEntryWebView(
                 entries = entries,
                 onAnkiExport = { entry, index -> exportEntry(entry, index) },
                 onOpenKanji = onOpenKanji,
+                onCorrection = { corrected -> applyCorrection(corrected) },
+                onRequestRanking = { ch -> computeRanking(ch) },
+                onEditOcrInApp = { startEditFromInApp() },
+                matchedText = matchedText,
+                originalMatchedText = originalMatchedText,
                 controller = webViewController,
                 modifier = Modifier.fillMaxWidth()
             )
@@ -275,6 +337,97 @@ private fun LookupTab(onOpenKanji: ((String) -> Unit)? = null) {
                 ) { Text("Export to Anki") }
             }
             Spacer(modifier = Modifier.height(16.dp))
+        }
+    }
+}
+
+// ============================================================
+//  OCR edit panel — promoted from the overlay popup for corrections that
+//  need a real IME (segmentation errors, dropped chars, kana mistakes)
+// ============================================================
+
+@Composable
+private fun OcrEditPanel(
+    initialText: String,
+    screenshotPath: String?,
+    onTextChange: (String) -> Unit,
+    onClose: () -> Unit
+) {
+    // Seed the field once per edit session; subsequent matchedText updates
+    // from live re-lookup must not overwrite what the user is typing.
+    var text by remember(initialText) { mutableStateOf(initialText) }
+    val sourceBitmap = remember(screenshotPath) {
+        screenshotPath?.let { p ->
+            val f = File(p)
+            if (f.exists()) BitmapFactory.decodeFile(p) else null
+        }
+    }
+
+    // Debounce live re-lookup so we don't hammer the DB on every keystroke.
+    LaunchedEffect(text) {
+        if (text.isBlank() || text == initialText) return@LaunchedEffect
+        delay(250)
+        onTextChange(text)
+    }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+        )
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Default.Edit,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = "Edit OCR text",
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.weight(1f),
+                    fontWeight = FontWeight.SemiBold
+                )
+                IconButton(onClick = onClose, modifier = Modifier.size(32.dp)) {
+                    Icon(Icons.Default.Close, contentDescription = "Close edit")
+                }
+            }
+            if (sourceBitmap != null) {
+                Spacer(Modifier.height(8.dp))
+                Image(
+                    bitmap = sourceBitmap.asImageBitmap(),
+                    contentDescription = "Source screenshot",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 220.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                label = { Text("Corrected text") },
+                placeholder = { Text("Type the right kanji…") },
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    imeAction = ImeAction.Done
+                )
+            )
+            Text(
+                text = "Results update as you type.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp)
+            )
         }
     }
 }

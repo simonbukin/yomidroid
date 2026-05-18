@@ -16,6 +16,7 @@ import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import com.yomidroid.MainActivity
 import com.yomidroid.dictionary.DictionaryEntry
+import com.yomidroid.dictionary.KanjiSimilarity
 import com.yomidroid.tts.TtsManager
 
 /**
@@ -38,7 +39,11 @@ class OverlayPopupWebView(private val context: Context) {
     private var webView: WebView? = null
     private var currentContainer: FrameLayout? = null
     private var currentEntries: List<DictionaryEntry> = emptyList()
+    private var currentMatchedText: String? = null
     private var onAnkiExport: ((DictionaryEntry, Int) -> Unit)? = null
+    private var onCorrection: ((String) -> Unit)? = null
+    private var onRequestRanking: ((Char) -> Unit)? = null
+    private var onEditOcrInApp: (() -> Unit)? = null
     private val handler = Handler(Looper.getMainLooper())
     private val ttsManager: TtsManager by lazy { TtsManager.getInstance(context) }
     private var isPageLoaded = false
@@ -54,6 +59,10 @@ class OverlayPopupWebView(private val context: Context) {
     private var maxPopupHeight: Int = 0
     private var textBounds: Rect = Rect()
 
+    // The matched text from the very first lookup in this session; threaded
+    // into the JSON payload so the popup can expose a "← original" reset.
+    private var pendingOriginalMatchedText: String? = null
+
     val isVisible: Boolean get() = webView?.visibility == View.VISIBLE
 
     /**
@@ -68,16 +77,32 @@ class OverlayPopupWebView(private val context: Context) {
         maxWidth: Int,
         maxHeight: Int,
         customCss: String?,
-        onAnkiExport: (DictionaryEntry, Int) -> Unit
+        onAnkiExport: (DictionaryEntry, Int) -> Unit,
+        onCorrection: ((String) -> Unit)? = null,
+        originalMatchedText: String? = null,
+        onRequestRanking: ((Char) -> Unit)? = null,
+        onEditOcrInApp: (() -> Unit)? = null
     ) {
         if (entries.isEmpty()) return
 
         this.currentContainer = container
         this.currentEntries = entries
+        this.currentMatchedText = entries.firstOrNull()?.matchedText
         this.onAnkiExport = onAnkiExport
+        this.onCorrection = onCorrection
+        this.onRequestRanking = onRequestRanking
+        this.onEditOcrInApp = onEditOcrInApp
         this.maxPopupWidth = maxWidth
         this.maxPopupHeight = maxHeight
         this.textBounds = Rect(textBounds)
+        this.pendingOriginalMatchedText = originalMatchedText ?: currentMatchedText
+
+        // Preload similarity table off the JS thread so requestSimilarKanji is cheap.
+        if (onCorrection != null) {
+            try { KanjiSimilarity.ensureLoaded(context) } catch (e: Exception) {
+                Log.w(TAG, "Failed to preload kanji similarity table: ${e.message}")
+            }
+        }
 
         val wv = getOrCreateWebView(container)
 
@@ -276,9 +301,29 @@ class OverlayPopupWebView(private val context: Context) {
      * Serialize dictionary entries to JSON for the popup JS renderer.
      */
     private fun serializeEntries(entries: List<DictionaryEntry>, customCss: String?): String {
+        val matched = entries.firstOrNull()?.matchedText
+        val correctionOn = onCorrection != null
         return com.yomidroid.dictionary.EntrySerializer.serialize(
-            context, entries, customCss, dictionaryCssMap
+            context, entries, customCss, dictionaryCssMap,
+            matchedText = if (correctionOn) matched else null,
+            originalMatchedText = if (correctionOn) pendingOriginalMatchedText else null
         )
+    }
+
+    /**
+     * Push the result of an async correction-candidate ranking back into the
+     * open popup. [ranked] is the list of `(neighbor, hitCount)` pairs sorted
+     * by descending hit count. JS reorders the sheet chips in place and adds
+     * count badges.
+     */
+    fun setCorrectionRanking(originalChar: Char, ranked: List<Pair<Char, Int>>) {
+        val arr = org.json.JSONArray()
+        for ((c, n) in ranked) {
+            arr.put(org.json.JSONObject().put("k", c.toString()).put("n", n))
+        }
+        val origQ = org.json.JSONObject.quote(originalChar.toString())
+        val rankedQ = org.json.JSONObject.quote(arr.toString())
+        webView?.evaluateJavascript("setCorrectionRanking($origQ, $rankedQ)", null)
     }
 
     private fun resizeToContent(contentHeightPx: Int) {
@@ -327,6 +372,37 @@ class OverlayPopupWebView(private val context: Context) {
                 }
                 context.startActivity(intent)
             }
+        }
+
+        /**
+         * Synchronously return the visually similar neighbors of [character]
+         * as a single concatenated string (one char per neighbor, up to ~8).
+         * Called on the WebView JS thread; the table is preloaded in show().
+         */
+        @JavascriptInterface
+        fun requestSimilarKanji(character: String): String {
+            val ch = character.firstOrNull() ?: return ""
+            return KanjiSimilarity.neighbors(ch).joinToString("")
+        }
+
+        @JavascriptInterface
+        fun applyCorrection(correctedText: String) {
+            val cb = onCorrection ?: return
+            if (correctedText.isEmpty()) return
+            handler.post { cb(correctedText) }
+        }
+
+        @JavascriptInterface
+        fun requestCorrectionRanking(originalChar: String) {
+            val cb = onRequestRanking ?: return
+            val ch = originalChar.firstOrNull() ?: return
+            handler.post { cb(ch) }
+        }
+
+        @JavascriptInterface
+        fun editOcrInApp() {
+            val cb = onEditOcrInApp ?: return
+            handler.post { cb() }
         }
     }
 }

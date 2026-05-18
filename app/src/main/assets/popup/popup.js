@@ -16,6 +16,17 @@ var currentEntryIndex = 0;
 var totalEntries = 0;
 var entriesData = [];
 var imageBasePath = '';
+// OCR substring that triggered the current lookup. When set, long-pressing a
+// kanji in the popup (or tapping the ✎ button) opens a "swap for visually
+// similar kanji" sheet that re-runs the lookup on the corrected string.
+var currentMatchedText = '';
+// The matchedText from the *first* lookup in this session. When the current
+// matched text drifts from this, a "← original" pill lets the user jump back.
+var originalMatchedText = '';
+// Sheet header right now is showing this kanji's candidates (replace mode),
+// or null when in picker mode / closed. Used by setCorrectionRanking to find
+// the right chip row to reorder.
+var currentCorrectionTarget = null;
 
 // Safe HTML tags for structured content
 var ALLOWED_TAGS = new Set([
@@ -41,12 +52,16 @@ function setEntries(json) {
     entriesData = data.entries || [];
     totalEntries = entriesData.length;
     currentEntryIndex = 0;
+    currentMatchedText = data.matchedText || '';
+    originalMatchedText = data.originalMatchedText || currentMatchedText;
 
     imageBasePath = data.imageBasePath || '';
     document.documentElement.setAttribute('data-theme', data.theme || 'dark');
     injectCustomCss(data.customCss || null);
     injectDictionaryCss(data.dictionaryCss || {});
 
+    dismissCorrectionSheet();
+    renderCorrectionToolbar();
     renderAll();
     reportHeight();
 }
@@ -430,7 +445,8 @@ function hasKanji(text) {
 }
 
 // Append [text] to [parent] with each kanji wrapped in a tappable <span>.
-// Used in headword rendering so per-character taps can open the Kanji detail view.
+// Tap opens the Kanji detail view; long-press opens the OCR-correction sheet
+// (when currentMatchedText is set).
 function appendKanjiAwareText(parent, text) {
     for (var i = 0; i < text.length; i++) {
         var ch = text[i];
@@ -439,6 +455,7 @@ function appendKanjiAwareText(parent, text) {
             span.className = 'kanji-tap';
             span.textContent = ch;
             span.addEventListener('click', makeKanjiClickHandler(ch));
+            attachLongPress(span, ch);
             parent.appendChild(span);
         } else {
             parent.appendChild(document.createTextNode(ch));
@@ -449,6 +466,13 @@ function appendKanjiAwareText(parent, text) {
 function makeKanjiClickHandler(ch) {
     return function(ev) {
         ev.stopPropagation();
+        // A long-press already opened the correction sheet; swallow the
+        // synthetic click that follows touchend.
+        if (ev.currentTarget && ev.currentTarget.dataset.lpFired === '1') {
+            delete ev.currentTarget.dataset.lpFired;
+            ev.preventDefault();
+            return;
+        }
         try {
             if (window.YomidroidPopup && typeof window.YomidroidPopup.openKanji === 'function') {
                 window.YomidroidPopup.openKanji(ch);
@@ -456,6 +480,281 @@ function makeKanjiClickHandler(ch) {
         } catch (_) {}
     };
 }
+
+// ============================================================
+//  OCR correction — long-press a kanji to swap for a similar one
+// ============================================================
+
+var LONG_PRESS_MS = 400;
+var LONG_PRESS_SLOP_PX = 8;
+
+function attachLongPress(el, ch) {
+    var timer = null;
+    var startX = 0, startY = 0;
+
+    function cancel() {
+        if (timer != null) { clearTimeout(timer); timer = null; }
+    }
+
+    el.addEventListener('touchstart', function(e) {
+        if (!currentMatchedText) return;
+        if (!e.touches || e.touches.length === 0) return;
+        startX = e.touches[0].clientX;
+        startY = e.touches[0].clientY;
+        cancel();
+        timer = setTimeout(function() {
+            timer = null;
+            el.dataset.lpFired = '1';
+            showCorrectionSheet(ch);
+        }, LONG_PRESS_MS);
+    }, { passive: true });
+
+    el.addEventListener('touchmove', function(e) {
+        if (timer == null || !e.touches || e.touches.length === 0) return;
+        var dx = Math.abs(e.touches[0].clientX - startX);
+        var dy = Math.abs(e.touches[0].clientY - startY);
+        if (dx > LONG_PRESS_SLOP_PX || dy > LONG_PRESS_SLOP_PX) cancel();
+    }, { passive: true });
+
+    el.addEventListener('touchend', cancel, { passive: true });
+    el.addEventListener('touchcancel', cancel, { passive: true });
+}
+
+// Open the correction sheet. If [originalChar] is null, render the "pick which
+// kanji to replace" step; otherwise jump straight to the candidate row for
+// that kanji.
+function showCorrectionSheet(originalChar) {
+    if (!currentMatchedText) return;
+    dismissCorrectionSheet();
+
+    var sheet = createElement('div', 'correction-sheet');
+    sheet.id = 'correction-sheet';
+
+    var header = createElement('div', 'correction-header');
+    var label = createElement('span', 'correction-label');
+    sheet.appendChild(header);
+
+    var close = createElement('button', 'correction-close');
+    close.setAttribute('aria-label', 'Close');
+    close.textContent = '×';
+    close.onclick = function(e) { e.stopPropagation(); dismissCorrectionSheet(); };
+
+    var kanjiInMatch = extractKanji(currentMatchedText);
+
+    if (originalChar == null && kanjiInMatch.length > 1) {
+        // Picker step
+        currentCorrectionTarget = null;
+        label.textContent = 'Which kanji is wrong?';
+        header.appendChild(label);
+        header.appendChild(close);
+
+        var pickRow = createElement('div', 'correction-row');
+        for (var i = 0; i < kanjiInMatch.length; i++) {
+            pickRow.appendChild(makePickerChip(kanjiInMatch[i]));
+        }
+        sheet.appendChild(pickRow);
+    } else {
+        var focusChar = originalChar || kanjiInMatch[0];
+        if (!focusChar) {
+            dismissCorrectionSheet();
+            return;
+        }
+        currentCorrectionTarget = focusChar;
+        label.appendChild(document.createTextNode('Replace '));
+        var orig = createElement('span', 'correction-orig');
+        orig.textContent = focusChar;
+        label.appendChild(orig);
+        label.appendChild(document.createTextNode(' with'));
+        header.appendChild(label);
+        header.appendChild(close);
+
+        var neighbors = '';
+        try {
+            if (window.YomidroidPopup && typeof window.YomidroidPopup.requestSimilarKanji === 'function') {
+                neighbors = window.YomidroidPopup.requestSimilarKanji(focusChar) || '';
+            }
+        } catch (_) {}
+
+        if (!neighbors) {
+            var empty = createElement('div', 'correction-empty');
+            empty.textContent = 'No suggestions.';
+            sheet.appendChild(empty);
+        } else {
+            var row = createElement('div', 'correction-row correction-candidates');
+            for (var j = 0; j < neighbors.length; j++) {
+                row.appendChild(makeCorrectionChip(focusChar, neighbors[j], null, true));
+            }
+            sheet.appendChild(row);
+
+            var hint = createElement('div', 'correction-hint');
+            hint.textContent = 'Tip: long-press a kanji in the popup to jump straight here.';
+            sheet.appendChild(hint);
+        }
+
+        // Kick off async ranking; setCorrectionRanking will reorder + badge.
+        try {
+            if (window.YomidroidPopup && typeof window.YomidroidPopup.requestCorrectionRanking === 'function') {
+                window.YomidroidPopup.requestCorrectionRanking(focusChar);
+            }
+        } catch (_) {}
+    }
+
+    document.body.appendChild(sheet);
+    reportHeight();
+}
+
+// Called by Kotlin once the per-candidate dictionary-hit count has been
+// computed in the background. Reorders the chips and adds count badges.
+function setCorrectionRanking(originalChar, rankedJson) {
+    if (currentCorrectionTarget !== originalChar) return;
+    var sheet = document.getElementById('correction-sheet');
+    if (!sheet) return;
+    var row = sheet.querySelector('.correction-candidates');
+    if (!row) return;
+    var ranked;
+    try { ranked = JSON.parse(rankedJson); } catch (_) { return; }
+    if (!Array.isArray(ranked) || ranked.length === 0) return;
+
+    row.innerHTML = '';
+    for (var i = 0; i < ranked.length; i++) {
+        var item = ranked[i];
+        row.appendChild(makeCorrectionChip(originalChar, item.k, item.n, false));
+    }
+    reportHeight();
+}
+
+function makePickerChip(ch) {
+    var chip = createElement('button', 'correction-chip correction-chip-picker');
+    chip.textContent = ch;
+    chip.onclick = function(e) {
+        e.stopPropagation();
+        showCorrectionSheet(ch);
+    };
+    return chip;
+}
+
+function makeCorrectionChip(originalChar, newChar, count, loading) {
+    var chip = createElement('button', 'correction-chip');
+    var glyph = createElement('span', 'correction-chip-glyph');
+    glyph.textContent = newChar;
+    chip.appendChild(glyph);
+    if (count != null) {
+        if (count <= 0) {
+            chip.classList.add('correction-chip-empty');
+        } else {
+            var badge = createElement('span', 'correction-chip-count');
+            badge.textContent = String(count);
+            chip.appendChild(badge);
+        }
+    } else if (loading) {
+        chip.classList.add('correction-chip-loading');
+    }
+    chip.onclick = function(e) {
+        e.stopPropagation();
+        applyCorrection(originalChar, newChar);
+    };
+    return chip;
+}
+
+function dismissCorrectionSheet() {
+    var existing = document.getElementById('correction-sheet');
+    if (existing) {
+        existing.remove();
+        reportHeight();
+    }
+    currentCorrectionTarget = null;
+}
+
+function applyCorrection(originalChar, newChar) {
+    if (!currentMatchedText) { dismissCorrectionSheet(); return; }
+    var idx = currentMatchedText.indexOf(originalChar);
+    if (idx < 0) { dismissCorrectionSheet(); return; }
+    var corrected = currentMatchedText.substring(0, idx) + newChar +
+                    currentMatchedText.substring(idx + 1);
+    dismissCorrectionSheet();
+    try {
+        if (window.YomidroidPopup && typeof window.YomidroidPopup.applyCorrection === 'function') {
+            window.YomidroidPopup.applyCorrection(corrected);
+        }
+    } catch (_) {}
+}
+
+// Reset the popup to the very first lookup of this session.
+function resetCorrection() {
+    if (!originalMatchedText) return;
+    if (originalMatchedText === currentMatchedText) return;
+    dismissCorrectionSheet();
+    try {
+        if (window.YomidroidPopup && typeof window.YomidroidPopup.applyCorrection === 'function') {
+            window.YomidroidPopup.applyCorrection(originalMatchedText);
+        }
+    } catch (_) {}
+}
+
+// Top toolbar with the discoverable ✎ button and (after a correction) a
+// "← original" pill. Rendered above the dictionary entries.
+function renderCorrectionToolbar() {
+    var existing = document.getElementById('correction-toolbar');
+    if (existing) existing.remove();
+    if (!currentMatchedText) return;
+    var kanjiInMatch = extractKanji(currentMatchedText);
+    if (kanjiInMatch.length === 0) return;
+
+    var bar = createElement('div', 'correction-toolbar');
+    bar.id = 'correction-toolbar';
+
+    if (originalMatchedText && originalMatchedText !== currentMatchedText) {
+        var reset = createElement('button', 'correction-reset');
+        reset.innerHTML = '&larr; ' + escapeHtml(originalMatchedText);
+        reset.title = 'Back to original lookup';
+        reset.onclick = function(e) { e.stopPropagation(); resetCorrection(); };
+        bar.appendChild(reset);
+    } else {
+        var spacer = createElement('span', 'correction-toolbar-spacer');
+        bar.appendChild(spacer);
+    }
+
+    var swapBtn = createElement('button', 'correction-edit');
+    swapBtn.title = 'Swap a kanji (long-press a kanji also works)';
+    swapBtn.innerHTML = PENCIL_SVG + '<span class="correction-edit-label">Swap</span>';
+    swapBtn.onclick = function(e) {
+        e.stopPropagation();
+        if (kanjiInMatch.length === 1) {
+            showCorrectionSheet(kanjiInMatch[0]);
+        } else {
+            showCorrectionSheet(null);
+        }
+    };
+    bar.appendChild(swapBtn);
+
+    var editAppBtn = createElement('button', 'correction-edit');
+    editAppBtn.title = 'Edit OCR text in app';
+    editAppBtn.innerHTML = EDIT_TEXT_SVG + '<span class="correction-edit-label">Edit</span>';
+    editAppBtn.onclick = function(e) {
+        e.stopPropagation();
+        try {
+            if (window.YomidroidPopup && typeof window.YomidroidPopup.editOcrInApp === 'function') {
+                window.YomidroidPopup.editOcrInApp();
+            }
+        } catch (_) {}
+    };
+    bar.appendChild(editAppBtn);
+
+    document.body.insertBefore(bar, document.body.firstChild);
+}
+
+function extractKanji(text) {
+    var out = [];
+    var seen = {};
+    for (var i = 0; i < text.length; i++) {
+        var ch = text[i];
+        if (isKanjiChar(ch) && !seen[ch]) { out.push(ch); seen[ch] = true; }
+    }
+    return out;
+}
+
+var PENCIL_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>';
+var EDIT_TEXT_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h12"/><path d="M4 12h7"/><path d="M14 17l4-4 3 3-4 4h-3v-3z"/></svg>';
 
 function buildFurigana(expression, reading) {
     var frag = document.createDocumentFragment();
