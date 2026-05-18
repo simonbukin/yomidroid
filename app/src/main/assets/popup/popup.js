@@ -710,10 +710,10 @@ function renderCorrectionToolbar() {
         bar.appendChild(spacer);
     }
 
-    var editBtn = createElement('button', 'correction-edit');
-    editBtn.title = 'Correct OCR (long-press a kanji also works)';
-    editBtn.innerHTML = PENCIL_SVG + '<span class="correction-edit-label">Correct</span>';
-    editBtn.onclick = function(e) {
+    var swapBtn = createElement('button', 'correction-edit');
+    swapBtn.title = 'Swap a kanji (long-press a kanji also works)';
+    swapBtn.innerHTML = PENCIL_SVG + '<span class="correction-edit-label">Swap</span>';
+    swapBtn.onclick = function(e) {
         e.stopPropagation();
         if (kanjiInMatch.length === 1) {
             showCorrectionSheet(kanjiInMatch[0]);
@@ -721,7 +721,20 @@ function renderCorrectionToolbar() {
             showCorrectionSheet(null);
         }
     };
-    bar.appendChild(editBtn);
+    bar.appendChild(swapBtn);
+
+    var editAppBtn = createElement('button', 'correction-edit');
+    editAppBtn.title = 'Edit OCR text in app';
+    editAppBtn.innerHTML = EDIT_TEXT_SVG + '<span class="correction-edit-label">Edit</span>';
+    editAppBtn.onclick = function(e) {
+        e.stopPropagation();
+        try {
+            if (window.YomidroidPopup && typeof window.YomidroidPopup.editOcrInApp === 'function') {
+                window.YomidroidPopup.editOcrInApp();
+            }
+        } catch (_) {}
+    };
+    bar.appendChild(editAppBtn);
 
     document.body.insertBefore(bar, document.body.firstChild);
 }
@@ -737,6 +750,7 @@ function extractKanji(text) {
 }
 
 var PENCIL_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>';
+var EDIT_TEXT_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h12"/><path d="M4 12h7"/><path d="M14 17l4-4 3 3-4 4h-3v-3z"/></svg>';
 
 function buildFurigana(expression, reading) {
     var frag = document.createDocumentFragment();

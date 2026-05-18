@@ -33,6 +33,7 @@ class DictionaryWebViewController {
     internal var onOpenKanji: ((String) -> Unit)? = null
     internal var onCorrection: ((String) -> Unit)? = null
     internal var onRequestRanking: ((Char) -> Unit)? = null
+    internal var onEditOcrInApp: (() -> Unit)? = null
 
     fun setAnkiResult(index: Int, status: String) {
         val wv = webView ?: return
@@ -75,6 +76,7 @@ fun DictionaryEntryWebView(
     onOpenKanji: ((String) -> Unit)? = null,
     onCorrection: ((String) -> Unit)? = null,
     onRequestRanking: ((Char) -> Unit)? = null,
+    onEditOcrInApp: (() -> Unit)? = null,
     matchedText: String? = null,
     originalMatchedText: String? = null,
     controller: DictionaryWebViewController = rememberDictionaryWebViewController(),
@@ -105,6 +107,7 @@ fun DictionaryEntryWebView(
         controller.onOpenKanji = onOpenKanji
         controller.onCorrection = onCorrection
         controller.onRequestRanking = onRequestRanking
+        controller.onEditOcrInApp = onEditOcrInApp
     }
 
     AndroidView(
@@ -205,5 +208,10 @@ private class DictionaryWebViewBridge(
     fun requestCorrectionRanking(originalChar: String) {
         val ch = originalChar.firstOrNull() ?: return
         mainHandler.post { controller.onRequestRanking?.invoke(ch) }
+    }
+
+    @JavascriptInterface
+    fun editOcrInApp() {
+        mainHandler.post { controller.onEditOcrInApp?.invoke() }
     }
 }

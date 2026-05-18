@@ -43,6 +43,7 @@ class OverlayPopupWebView(private val context: Context) {
     private var onAnkiExport: ((DictionaryEntry, Int) -> Unit)? = null
     private var onCorrection: ((String) -> Unit)? = null
     private var onRequestRanking: ((Char) -> Unit)? = null
+    private var onEditOcrInApp: (() -> Unit)? = null
     private val handler = Handler(Looper.getMainLooper())
     private val ttsManager: TtsManager by lazy { TtsManager.getInstance(context) }
     private var isPageLoaded = false
@@ -79,7 +80,8 @@ class OverlayPopupWebView(private val context: Context) {
         onAnkiExport: (DictionaryEntry, Int) -> Unit,
         onCorrection: ((String) -> Unit)? = null,
         originalMatchedText: String? = null,
-        onRequestRanking: ((Char) -> Unit)? = null
+        onRequestRanking: ((Char) -> Unit)? = null,
+        onEditOcrInApp: (() -> Unit)? = null
     ) {
         if (entries.isEmpty()) return
 
@@ -89,6 +91,7 @@ class OverlayPopupWebView(private val context: Context) {
         this.onAnkiExport = onAnkiExport
         this.onCorrection = onCorrection
         this.onRequestRanking = onRequestRanking
+        this.onEditOcrInApp = onEditOcrInApp
         this.maxPopupWidth = maxWidth
         this.maxPopupHeight = maxHeight
         this.textBounds = Rect(textBounds)
@@ -394,6 +397,12 @@ class OverlayPopupWebView(private val context: Context) {
             val cb = onRequestRanking ?: return
             val ch = originalChar.firstOrNull() ?: return
             handler.post { cb(ch) }
+        }
+
+        @JavascriptInterface
+        fun editOcrInApp() {
+            val cb = onEditOcrInApp ?: return
+            handler.post { cb() }
         }
     }
 }

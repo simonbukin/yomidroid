@@ -38,6 +38,16 @@ object LookupResultRepository {
     private val _latestOriginalMatchedText = MutableStateFlow<String?>(null)
     val latestOriginalMatchedText: StateFlow<String?> = _latestOriginalMatchedText.asStateFlow()
 
+    // True while the in-app OCR edit surface should be shown (overlays the
+    // normal lookup view with a screenshot crop + editable text field).
+    private val _editModeActive = MutableStateFlow(false)
+    val editModeActive: StateFlow<Boolean> = _editModeActive.asStateFlow()
+
+    // Path to the screenshot crop (matched-text region with padding) that the
+    // edit surface displays above the text field as visual context.
+    private val _editScreenshotCropPath = MutableStateFlow<String?>(null)
+    val editScreenshotCropPath: StateFlow<String?> = _editScreenshotCropPath.asStateFlow()
+
     /**
      * Update the live-lookup state for a fresh lookup. Resets the
      * original-matched-text marker to [matchedText] so subsequent
@@ -48,12 +58,13 @@ object LookupResultRepository {
         sentence: String?,
         context: Context? = null,
         screenshot: Bitmap? = null,
-        matchedText: String? = null
+        matchedText: String? = null,
+        originalMatchedText: String? = null
     ) {
         _latestEntries.value = entries
         _latestSentence.value = sentence
         _latestMatchedText.value = matchedText
-        _latestOriginalMatchedText.value = matchedText
+        _latestOriginalMatchedText.value = originalMatchedText ?: matchedText
         if (context != null) {
             _latestScreenshotPath.value = if (screenshot != null) {
                 writeScreenshot(context, screenshot)
@@ -82,6 +93,19 @@ object LookupResultRepository {
         _latestScreenshotPath.value = null
         _latestMatchedText.value = null
         _latestOriginalMatchedText.value = null
+        endEditMode()
+    }
+
+    /** Open the edit surface, displaying [croppedScreenshotPath] above the text field. */
+    fun startEditMode(croppedScreenshotPath: String?) {
+        _editScreenshotCropPath.value = croppedScreenshotPath
+        _editModeActive.value = true
+    }
+
+    /** Close the edit surface and forget the crop path. */
+    fun endEditMode() {
+        _editModeActive.value = false
+        _editScreenshotCropPath.value = null
     }
 
     private fun writeScreenshot(context: Context, bitmap: Bitmap): String? {

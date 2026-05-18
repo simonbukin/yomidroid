@@ -119,6 +119,14 @@ class YomidroidAccessibilityService : AccessibilityService() {
 
     // Keep clean screenshot for Anki export
     private var currentScreenshot: Bitmap? = null
+
+    // Cached so an in-app "Edit OCR" tap (decoupled mode, where the overlay
+    // popup is never shown and can't fire the bridge) can still trigger a
+    // tight screenshot crop for the edit surface.
+    private var lastShownTextBounds: Rect? = null
+    private var lastShownEntries: List<com.yomidroid.dictionary.DictionaryEntry> = emptyList()
+    private var lastShownOcrText: String = ""
+    private var lastShownOriginalMatched: String = ""
     // Original screenshot dimensions (before scaling) for coordinate mapping
     private var originalScreenshotWidth = 0
     private var originalScreenshotHeight = 0
@@ -941,6 +949,10 @@ class YomidroidAccessibilityService : AccessibilityService() {
         originalScreenshotWidth = 0
         originalScreenshotHeight = 0
         charGrid = emptyList()
+        lastShownTextBounds = null
+        lastShownEntries = emptyList()
+        lastShownOcrText = ""
+        lastShownOriginalMatched = ""
 
         // Reset cursor toggle, popup lock, and joystick/hat state
         popupLocked = false
@@ -1122,6 +1134,10 @@ class YomidroidAccessibilityService : AccessibilityService() {
                         val textBounds = buildTextBounds(context, unifiedIndex, matchLen, sx, sy)
 
                         val originalMatched = firstEntry.matchedText
+                        lastShownTextBounds = Rect(textBounds)
+                        lastShownEntries = entries
+                        lastShownOcrText = ocrResult.text
+                        lastShownOriginalMatched = originalMatched
                         if (isDecoupledMode) {
                             LookupResultRepository.updateEntries(
                                 entries = entries,
@@ -1148,6 +1164,9 @@ class YomidroidAccessibilityService : AccessibilityService() {
                                 originalMatchedText = originalMatched,
                                 onRequestRanking = { ch ->
                                     computeCorrectionRanking(ch, originalMatched)
+                                },
+                                onEditOcrInApp = {
+                                    handleEditOcrInApp(entries, ocrResult.text, originalMatched, textBounds)
                                 }
                             )
                         }
@@ -1322,6 +1341,10 @@ class YomidroidAccessibilityService : AccessibilityService() {
             }
 
             val originalMatched = entries.firstOrNull()?.matchedText.orEmpty()
+            lastShownTextBounds = Rect(textBounds)
+            lastShownEntries = entries
+            lastShownOcrText = ocrResult.text
+            lastShownOriginalMatched = originalMatched
             if (isDecoupledMode) {
                 LookupResultRepository.updateEntries(
                     entries = entries,
@@ -1347,6 +1370,9 @@ class YomidroidAccessibilityService : AccessibilityService() {
                     originalMatchedText = originalMatched,
                     onRequestRanking = { ch ->
                         computeCorrectionRanking(ch, originalMatched)
+                    },
+                    onEditOcrInApp = {
+                        handleEditOcrInApp(entries, ocrResult.text, originalMatched, textBounds)
                     }
                 )
             }
@@ -1391,6 +1417,8 @@ class YomidroidAccessibilityService : AccessibilityService() {
                 if (unifiedIndex >= 0) {
                     overlayView?.setHighlightFromUnified(ctx, unifiedIndex, matchLen)
                 }
+                lastShownEntries = entries
+                lastShownOcrText = ocrResult.text
                 if (isDecoupledMode) {
                     LookupResultRepository.updateEntriesFromCorrection(entries, firstEntry.matchedText)
                 } else {
@@ -1410,10 +1438,101 @@ class YomidroidAccessibilityService : AccessibilityService() {
                         originalMatchedText = originalMatchedText,
                         onRequestRanking = { ch ->
                             computeCorrectionRanking(ch, firstEntry.matchedText)
+                        },
+                        onEditOcrInApp = {
+                            handleEditOcrInApp(entries, ocrResult.text, originalMatchedText, textBounds)
                         }
                     )
                 }
             }
+        }
+    }
+
+    /**
+     * Promote the current overlay lookup to the in-app Now → Lookup tab so the
+     * user can edit the OCR text with a normal Compose IME (not constrained by
+     * the accessibility-overlay window's focus rules) while still seeing the
+     * cropped screenshot region as visual context.
+     *
+     * Crops [textBounds] (with padding) out of the cached screenshot, pushes
+     * the current entries/matched text to [LookupResultRepository], hides the
+     * overlay popup, and launches the app.
+     */
+    private fun handleEditOcrInApp(
+        entries: List<com.yomidroid.dictionary.DictionaryEntry>,
+        ocrText: String,
+        originalMatchedText: String,
+        textBounds: Rect
+    ) {
+        val cropPath = cropScreenshotForEdit(textBounds)?.let { writeEditCropToFile(it) }
+        LookupResultRepository.updateEntries(
+            entries = entries,
+            sentence = ocrText,
+            context = this,
+            screenshot = currentScreenshot,
+            matchedText = entries.firstOrNull()?.matchedText,
+            originalMatchedText = originalMatchedText
+        )
+        // Preserve the very first matched text across the in-app session.
+        LookupResultRepository.startEditMode(cropPath)
+        overlayPopupWebView?.hide()
+
+        val intent = Intent(this, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        }
+        try {
+            startActivity(intent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to launch MainActivity for OCR edit: ${e.message}")
+        }
+    }
+
+    /**
+     * Entry point used by the in-app Lookup tab in decoupled mode, where the
+     * overlay popup never appears and so the JS bridge can't be the trigger.
+     * Crops the cached screenshot region (if known) and opens the edit
+     * surface; no-ops gracefully if no lookup is active.
+     */
+    fun startOcrEditFromInApp() {
+        if (lastShownEntries.isEmpty()) {
+            LookupResultRepository.startEditMode(null)
+            return
+        }
+        val cropPath = lastShownTextBounds?.let { cropScreenshotForEdit(it) }?.let { writeEditCropToFile(it) }
+        LookupResultRepository.startEditMode(cropPath)
+    }
+
+    private fun cropScreenshotForEdit(textBounds: Rect): Bitmap? {
+        val src = currentScreenshot ?: return null
+        if (src.isRecycled || screenWidth <= 0 || screenHeight <= 0) return null
+        val sx = src.width.toFloat() / screenWidth
+        val sy = src.height.toFloat() / screenHeight
+        val padX = (textBounds.width() * 0.2f).toInt().coerceAtLeast(24)
+        val padY = (textBounds.height() * 0.6f).toInt().coerceAtLeast(24)
+        val left = ((textBounds.left - padX) * sx).toInt().coerceAtLeast(0)
+        val top = ((textBounds.top - padY) * sy).toInt().coerceAtLeast(0)
+        val right = ((textBounds.right + padX) * sx).toInt().coerceAtMost(src.width)
+        val bottom = ((textBounds.bottom + padY) * sy).toInt().coerceAtMost(src.height)
+        val w = right - left
+        val h = bottom - top
+        if (w <= 0 || h <= 0) return null
+        return try { Bitmap.createBitmap(src, left, top, w, h) } catch (e: Exception) { null }
+    }
+
+    private fun writeEditCropToFile(bitmap: Bitmap): String? {
+        return try {
+            val dir = java.io.File(filesDir, "ocr_edit").apply { mkdirs() }
+            // Timestamped filename so the in-app Image composable reloads on each request.
+            val file = java.io.File(dir, "crop_${System.currentTimeMillis()}.jpg")
+            java.io.FileOutputStream(file).use { out ->
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 88, out)
+            }
+            file.absolutePath
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to write OCR edit crop: ${e.message}")
+            null
+        } finally {
+            if (!bitmap.isRecycled) bitmap.recycle()
         }
     }
 
