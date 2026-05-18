@@ -585,6 +585,10 @@ function showCorrectionSheet(originalChar) {
                 row.appendChild(makeCorrectionChip(focusChar, neighbors[j], null, true));
             }
             sheet.appendChild(row);
+
+            var hint = createElement('div', 'correction-hint');
+            hint.textContent = 'Tip: long-press a kanji in the popup to jump straight here.';
+            sheet.appendChild(hint);
         }
 
         // Kick off async ranking; setCorrectionRanking will reorder + badge.

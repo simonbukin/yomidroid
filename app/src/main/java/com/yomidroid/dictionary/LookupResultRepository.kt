@@ -39,14 +39,9 @@ object LookupResultRepository {
     val latestOriginalMatchedText: StateFlow<String?> = _latestOriginalMatchedText.asStateFlow()
 
     // True while the in-app OCR edit surface should be shown (overlays the
-    // normal lookup view with a screenshot crop + editable text field).
+    // normal lookup view with the source screenshot + editable text field).
     private val _editModeActive = MutableStateFlow(false)
     val editModeActive: StateFlow<Boolean> = _editModeActive.asStateFlow()
-
-    // Path to the screenshot crop (matched-text region with padding) that the
-    // edit surface displays above the text field as visual context.
-    private val _editScreenshotCropPath = MutableStateFlow<String?>(null)
-    val editScreenshotCropPath: StateFlow<String?> = _editScreenshotCropPath.asStateFlow()
 
     /**
      * Update the live-lookup state for a fresh lookup. Resets the
@@ -96,16 +91,14 @@ object LookupResultRepository {
         endEditMode()
     }
 
-    /** Open the edit surface, displaying [croppedScreenshotPath] above the text field. */
-    fun startEditMode(croppedScreenshotPath: String?) {
-        _editScreenshotCropPath.value = croppedScreenshotPath
+    /** Open the in-app OCR edit surface. */
+    fun startEditMode() {
         _editModeActive.value = true
     }
 
-    /** Close the edit surface and forget the crop path. */
+    /** Close the in-app OCR edit surface. */
     fun endEditMode() {
         _editModeActive.value = false
-        _editScreenshotCropPath.value = null
     }
 
     private fun writeScreenshot(context: Context, bitmap: Bitmap): String? {

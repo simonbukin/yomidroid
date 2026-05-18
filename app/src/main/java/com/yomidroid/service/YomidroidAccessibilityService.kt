@@ -1451,20 +1451,16 @@ class YomidroidAccessibilityService : AccessibilityService() {
     /**
      * Promote the current overlay lookup to the in-app Now → Lookup tab so the
      * user can edit the OCR text with a normal Compose IME (not constrained by
-     * the accessibility-overlay window's focus rules) while still seeing the
-     * cropped screenshot region as visual context.
-     *
-     * Crops [textBounds] (with padding) out of the cached screenshot, pushes
-     * the current entries/matched text to [LookupResultRepository], hides the
-     * overlay popup, and launches the app.
+     * the accessibility-overlay window's focus rules). The full source
+     * screenshot is what the edit panel displays — and what Anki export
+     * attaches — so [textBounds] is no longer used here.
      */
     private fun handleEditOcrInApp(
         entries: List<com.yomidroid.dictionary.DictionaryEntry>,
         ocrText: String,
         originalMatchedText: String,
-        textBounds: Rect
+        @Suppress("UNUSED_PARAMETER") textBounds: Rect
     ) {
-        val cropPath = cropScreenshotForEdit(textBounds)?.let { writeEditCropToFile(it) }
         LookupResultRepository.updateEntries(
             entries = entries,
             sentence = ocrText,
@@ -1473,8 +1469,7 @@ class YomidroidAccessibilityService : AccessibilityService() {
             matchedText = entries.firstOrNull()?.matchedText,
             originalMatchedText = originalMatchedText
         )
-        // Preserve the very first matched text across the in-app session.
-        LookupResultRepository.startEditMode(cropPath)
+        LookupResultRepository.startEditMode()
         overlayPopupWebView?.hide()
 
         val intent = Intent(this, MainActivity::class.java).apply {
@@ -1490,50 +1485,9 @@ class YomidroidAccessibilityService : AccessibilityService() {
     /**
      * Entry point used by the in-app Lookup tab in decoupled mode, where the
      * overlay popup never appears and so the JS bridge can't be the trigger.
-     * Crops the cached screenshot region (if known) and opens the edit
-     * surface; no-ops gracefully if no lookup is active.
      */
     fun startOcrEditFromInApp() {
-        if (lastShownEntries.isEmpty()) {
-            LookupResultRepository.startEditMode(null)
-            return
-        }
-        val cropPath = lastShownTextBounds?.let { cropScreenshotForEdit(it) }?.let { writeEditCropToFile(it) }
-        LookupResultRepository.startEditMode(cropPath)
-    }
-
-    private fun cropScreenshotForEdit(textBounds: Rect): Bitmap? {
-        val src = currentScreenshot ?: return null
-        if (src.isRecycled || screenWidth <= 0 || screenHeight <= 0) return null
-        val sx = src.width.toFloat() / screenWidth
-        val sy = src.height.toFloat() / screenHeight
-        val padX = (textBounds.width() * 0.2f).toInt().coerceAtLeast(24)
-        val padY = (textBounds.height() * 0.6f).toInt().coerceAtLeast(24)
-        val left = ((textBounds.left - padX) * sx).toInt().coerceAtLeast(0)
-        val top = ((textBounds.top - padY) * sy).toInt().coerceAtLeast(0)
-        val right = ((textBounds.right + padX) * sx).toInt().coerceAtMost(src.width)
-        val bottom = ((textBounds.bottom + padY) * sy).toInt().coerceAtMost(src.height)
-        val w = right - left
-        val h = bottom - top
-        if (w <= 0 || h <= 0) return null
-        return try { Bitmap.createBitmap(src, left, top, w, h) } catch (e: Exception) { null }
-    }
-
-    private fun writeEditCropToFile(bitmap: Bitmap): String? {
-        return try {
-            val dir = java.io.File(filesDir, "ocr_edit").apply { mkdirs() }
-            // Timestamped filename so the in-app Image composable reloads on each request.
-            val file = java.io.File(dir, "crop_${System.currentTimeMillis()}.jpg")
-            java.io.FileOutputStream(file).use { out ->
-                bitmap.compress(Bitmap.CompressFormat.JPEG, 88, out)
-            }
-            file.absolutePath
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to write OCR edit crop: ${e.message}")
-            null
-        } finally {
-            if (!bitmap.isRecycled) bitmap.recycle()
-        }
+        LookupResultRepository.startEditMode()
     }
 
     /**

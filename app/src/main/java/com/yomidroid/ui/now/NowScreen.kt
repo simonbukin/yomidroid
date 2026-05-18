@@ -229,7 +229,6 @@ private fun LookupTab(onOpenKanji: ((String) -> Unit)? = null) {
     val matchedText by LookupResultRepository.latestMatchedText.collectAsState()
     val originalMatchedText by LookupResultRepository.latestOriginalMatchedText.collectAsState()
     val editModeActive by LookupResultRepository.editModeActive.collectAsState()
-    val editCropPath by LookupResultRepository.editScreenshotCropPath.collectAsState()
     val ankiExporter = remember { AnkiDroidExporter(context) }
     val scope = rememberCoroutineScope()
     val webViewController = rememberDictionaryWebViewController()
@@ -248,9 +247,7 @@ private fun LookupTab(onOpenKanji: ((String) -> Unit)? = null) {
     }
 
     fun startEditFromInApp() {
-        val svc = com.yomidroid.service.YomidroidAccessibilityService.instance
-        if (svc != null) svc.startOcrEditFromInApp()
-        else LookupResultRepository.startEditMode(null)
+        LookupResultRepository.startEditMode()
     }
 
     fun computeRanking(originalChar: Char) {
@@ -315,7 +312,7 @@ private fun LookupTab(onOpenKanji: ((String) -> Unit)? = null) {
             if (editModeActive) {
                 OcrEditPanel(
                     initialText = matchedText.orEmpty(),
-                    cropPath = editCropPath,
+                    screenshotPath = screenshotPath,
                     onTextChange = { text -> applyCorrection(text) },
                     onClose = { LookupResultRepository.endEditMode() }
                 )
@@ -352,15 +349,15 @@ private fun LookupTab(onOpenKanji: ((String) -> Unit)? = null) {
 @Composable
 private fun OcrEditPanel(
     initialText: String,
-    cropPath: String?,
+    screenshotPath: String?,
     onTextChange: (String) -> Unit,
     onClose: () -> Unit
 ) {
     // Seed the field once per edit session; subsequent matchedText updates
     // from live re-lookup must not overwrite what the user is typing.
     var text by remember(initialText) { mutableStateOf(initialText) }
-    val cropBitmap = remember(cropPath) {
-        cropPath?.let { p ->
+    val sourceBitmap = remember(screenshotPath) {
+        screenshotPath?.let { p ->
             val f = File(p)
             if (f.exists()) BitmapFactory.decodeFile(p) else null
         }
@@ -401,15 +398,15 @@ private fun OcrEditPanel(
                     Icon(Icons.Default.Close, contentDescription = "Close edit")
                 }
             }
-            if (cropBitmap != null) {
+            if (sourceBitmap != null) {
                 Spacer(Modifier.height(8.dp))
                 Image(
-                    bitmap = cropBitmap.asImageBitmap(),
-                    contentDescription = "OCR region",
-                    contentScale = ContentScale.FillWidth,
+                    bitmap = sourceBitmap.asImageBitmap(),
+                    contentDescription = "Source screenshot",
+                    contentScale = ContentScale.Fit,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 140.dp)
+                        .heightIn(max = 220.dp)
                         .clip(RoundedCornerShape(6.dp))
                 )
             }
