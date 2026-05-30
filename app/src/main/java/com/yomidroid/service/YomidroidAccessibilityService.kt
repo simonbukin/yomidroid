@@ -38,6 +38,7 @@ import com.yomidroid.config.InputConfig
 import com.yomidroid.config.InputConfigManager
 import com.yomidroid.config.OcrConfig
 import com.yomidroid.config.OcrConfigManager
+import com.yomidroid.ocr.CropCalculator
 import com.yomidroid.ocr.OcrEngine
 import com.yomidroid.ocr.OcrEngineFactory
 import com.yomidroid.anki.ExportResult
@@ -130,6 +131,10 @@ class YomidroidAccessibilityService : AccessibilityService() {
     // Original screenshot dimensions (before scaling) for coordinate mapping
     private var originalScreenshotWidth = 0
     private var originalScreenshotHeight = 0
+    // Crop offset (in original-bitmap pixels) applied before OCR. OCR char
+    // bounds are in cropped-bitmap space; add these before scaling to screen.
+    private var currentCropOffsetX = 0
+    private var currentCropOffsetY = 0
 
     // OCR engine system
     private var ocrEngine: OcrEngine? = null
@@ -578,8 +583,33 @@ class YomidroidAccessibilityService : AccessibilityService() {
     private fun processOcr(bitmap: Bitmap) {
         val engine = ocrEngine ?: return
 
+        val cfg = ocrConfigManager?.getConfig() ?: OcrConfig()
+        val originalWidth = bitmap.width
+        val originalHeight = bitmap.height
+
+        // Save an UNCROPPED sample so the user can adjust the custom crop region
+        // against a real screenshot from inside the in-app settings.
+        saveCropPickerSample(bitmap)
+
+        val crop = CropCalculator.computeCrop(originalWidth, originalHeight, cfg)
+        val isFull = crop.isFullBitmap(originalWidth, originalHeight)
+        val bitmapForOcr: Bitmap
+        val cropOffsetX: Int
+        val cropOffsetY: Int
+        if (isFull) {
+            bitmapForOcr = bitmap
+            cropOffsetX = 0
+            cropOffsetY = 0
+        } else {
+            bitmapForOcr = Bitmap.createBitmap(bitmap, crop.left, crop.top, crop.width, crop.height)
+            cropOffsetX = crop.left
+            cropOffsetY = crop.top
+            bitmap.recycle()
+            Log.d(TAG, "OCR crop applied: preset=${cfg.cropPreset} rect=$crop")
+        }
+
         serviceScope.launch {
-            val result = engine.processImage(bitmap)
+            val result = engine.processImage(bitmapForOcr)
 
             withContext(Dispatchers.Main) {
                 result.fold(
@@ -587,7 +617,7 @@ class YomidroidAccessibilityService : AccessibilityService() {
                         Log.d(TAG, "OCR success, found ${ocrResults.size} results")
                         val merged = mergeAdjacentLines(ocrResults)
                         if (merged.isNotEmpty()) {
-                            showTextOverlay(merged, bitmap)
+                            showTextOverlay(merged, bitmapForOcr, originalWidth, originalHeight, cropOffsetX, cropOffsetY)
                         } else {
                             Log.d(TAG, "No OCR results found")
                             Toast.makeText(
@@ -781,6 +811,38 @@ class YomidroidAccessibilityService : AccessibilityService() {
         else (sorted[mid - 1] + sorted[mid]) / 2f
     }
 
+    /**
+     * Save a downscaled copy of the uncropped capture to cacheDir so the OCR
+     * settings screen can let the user adjust the custom crop region against a
+     * real screenshot. Runs async; never blocks OCR.
+     */
+    private fun saveCropPickerSample(bitmap: Bitmap) {
+        val copy = runCatching { bitmap.copy(Bitmap.Config.ARGB_8888, false) }.getOrNull() ?: return
+        serviceScope.launch {
+            try {
+                val maxDim = 1280f
+                val scale = maxDim / maxOf(copy.width, copy.height)
+                val sample = if (scale < 1f) {
+                    Bitmap.createScaledBitmap(
+                        copy,
+                        (copy.width * scale).toInt(),
+                        (copy.height * scale).toInt(),
+                        true
+                    ).also { copy.recycle() }
+                } else copy
+
+                val outFile = java.io.File(cacheDir, "crop_picker_sample.jpg")
+                java.io.FileOutputStream(outFile).use { out ->
+                    sample.compress(Bitmap.CompressFormat.JPEG, 85, out)
+                }
+                sample.recycle()
+                Log.d(TAG, "Crop picker sample saved: ${outFile.absolutePath}")
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to save crop picker sample: ${e.message}")
+            }
+        }
+    }
+
     private fun storeScreenshot(fullBitmap: Bitmap) {
         // Recycle previous screenshot to prevent memory leak
         currentScreenshot?.recycle()
@@ -799,7 +861,14 @@ class YomidroidAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun showTextOverlay(results: List<OcrResult>, screenshot: Bitmap) {
+    private fun showTextOverlay(
+        results: List<OcrResult>,
+        screenshot: Bitmap,
+        originalFullWidth: Int = screenshot.width,
+        originalFullHeight: Int = screenshot.height,
+        cropOffsetX: Int = 0,
+        cropOffsetY: Int = 0
+    ) {
         removeOverlay()
 
         // Clear lookup cache for new overlay
@@ -828,20 +897,28 @@ class YomidroidAccessibilityService : AccessibilityService() {
         // Share OCR results with repository for Grammar Analyzer
         OcrResultRepository.updateOcrResults(results)
 
-        // Store original dimensions for coordinate mapping before any scaling
-        originalScreenshotWidth = screenshot.width
-        originalScreenshotHeight = screenshot.height
+        // Track ORIGINAL (pre-crop) screenshot dimensions for the screen<->bitmap
+        // scale factor. OCR result coordinates are in cropped-bitmap space, so the
+        // overlay shifts them by the crop offset before applying the scale.
+        originalScreenshotWidth = originalFullWidth
+        originalScreenshotHeight = originalFullHeight
+        currentCropOffsetX = cropOffsetX
+        currentCropOffsetY = cropOffsetY
 
-        // Store clean screenshot for Anki export (scaled down to save memory)
+        // Store clean screenshot for Anki export (scaled down to save memory).
+        // This is the cropped bitmap when a crop is active, so Anki cards no
+        // longer include letterbox bars or sidebars.
         storeScreenshot(screenshot)
 
-        // Calculate scale factors for coordinate transformation
-        // This maps ML Kit bounding boxes (in original bitmap space) to screen coordinates
+        // Calculate scale factors for coordinate transformation against the
+        // ORIGINAL full bitmap, so a (croppedX + cropOffsetX) * scaleX maps to
+        // the correct screen position.
         val scaleX = screenWidth.toFloat() / originalScreenshotWidth
         val scaleY = screenHeight.toFloat() / originalScreenshotHeight
         Log.d(TAG, "Scale factors: scaleX=$scaleX, scaleY=$scaleY " +
                    "(screen: ${screenWidth}x${screenHeight}, " +
-                   "original bitmap: ${originalScreenshotWidth}x${originalScreenshotHeight})")
+                   "original bitmap: ${originalScreenshotWidth}x${originalScreenshotHeight}, " +
+                   "cropOffset: ($cropOffsetX,$cropOffsetY))")
 
         overlayView = OverlayTextView(
             context = this,
@@ -849,6 +926,8 @@ class YomidroidAccessibilityService : AccessibilityService() {
             unifiedContext = unifiedContext,
             scaleX = scaleX,
             scaleY = scaleY,
+            cropOffsetX = cropOffsetX,
+            cropOffsetY = cropOffsetY,
             highlightColor = colorConfig.highlightColor,
             requireExplicitDismiss = inputConfig.requireExplicitDismiss,
             onTextTapped = { ocrResult, charIndex ->
@@ -1086,6 +1165,13 @@ class YomidroidAccessibilityService : AccessibilityService() {
                 )
                 dao.insert(historyRecord)
                 Log.d(TAG, "Saved to history: ${entry.expression} from ${srcAppLabel ?: "unknown"}")
+
+                val historyCfg = com.yomidroid.config.HistoryConfigManager(
+                    this@YomidroidAccessibilityService
+                ).getConfig()
+                com.yomidroid.data.HistoryPruner.pruneIfNeeded(
+                    this@YomidroidAccessibilityService, historyCfg
+                )
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to save to history: ${e.message}")
             }
@@ -1167,6 +1253,9 @@ class YomidroidAccessibilityService : AccessibilityService() {
                                 },
                                 onEditOcrInApp = {
                                     handleEditOcrInApp(entries, ocrResult.text, originalMatched, textBounds)
+                                },
+                                onLookupTerm = { target ->
+                                    handleCorrection(target, ocrResult, unifiedIndex, textBounds, originalMatched)
                                 }
                             )
                         }
@@ -1373,6 +1462,9 @@ class YomidroidAccessibilityService : AccessibilityService() {
                     },
                     onEditOcrInApp = {
                         handleEditOcrInApp(entries, ocrResult.text, originalMatched, textBounds)
+                    },
+                    onLookupTerm = { target ->
+                        handleCorrection(target, ocrResult, lastLookedUpIndex, textBounds, originalMatched)
                     }
                 )
             }
@@ -1441,6 +1533,9 @@ class YomidroidAccessibilityService : AccessibilityService() {
                         },
                         onEditOcrInApp = {
                             handleEditOcrInApp(entries, ocrResult.text, originalMatchedText, textBounds)
+                        },
+                        onLookupTerm = { target ->
+                            handleCorrection(target, ocrResult, unifiedIndex, textBounds, originalMatchedText)
                         }
                     )
                 }
@@ -1532,10 +1627,10 @@ class YomidroidAccessibilityService : AccessibilityService() {
         for (offset in 0 until matchLen) {
             val mapping = context.getLocalPosition(unifiedIndex + offset) ?: continue
             val charRect = mapping.ocrResult.charBounds.getOrNull(mapping.charIndex) ?: continue
-            left = minOf(left, (charRect.left * scaleX).toInt())
-            top = minOf(top, (charRect.top * scaleY).toInt())
-            right = maxOf(right, (charRect.right * scaleX).toInt())
-            bottom = maxOf(bottom, (charRect.bottom * scaleY).toInt())
+            left = minOf(left, ((charRect.left + currentCropOffsetX) * scaleX).toInt())
+            top = minOf(top, ((charRect.top + currentCropOffsetY) * scaleY).toInt())
+            right = maxOf(right, ((charRect.right + currentCropOffsetX) * scaleX).toInt())
+            bottom = maxOf(bottom, ((charRect.bottom + currentCropOffsetY) * scaleY).toInt())
         }
 
         // Fallback if no char bounds found

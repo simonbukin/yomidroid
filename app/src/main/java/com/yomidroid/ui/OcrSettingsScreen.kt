@@ -18,6 +18,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.yomidroid.config.CropPreset
 import com.yomidroid.config.MangaOcrCropScaling
 import com.yomidroid.config.MangaOcrDetector
 import com.yomidroid.config.OcrConfig
@@ -29,7 +30,10 @@ import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun OcrSettingsScreen(onBack: () -> Unit) {
+fun OcrSettingsScreen(
+    onBack: () -> Unit,
+    onOpenCropPicker: () -> Unit = {}
+) {
     val context = LocalContext.current
     val configManager = remember { OcrConfigManager(context) }
     var config by remember { mutableStateOf(configManager.getConfig()) }
@@ -160,6 +164,10 @@ fun OcrSettingsScreen(onBack: () -> Unit) {
                     onChange = ::saveAndApply
                 )
             }
+
+            Spacer(Modifier.height(24.dp))
+
+            CropRegionSection(config, ::saveAndApply, onOpenCropPicker)
 
             Spacer(Modifier.height(24.dp))
 
@@ -498,5 +506,106 @@ private fun InfoCard(title: String, points: List<String>) {
                 )
             }
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun CropRegionSection(
+    config: OcrConfig,
+    onChange: (OcrConfig) -> Unit,
+    onOpenCropPicker: () -> Unit
+) {
+    val context = LocalContext.current
+    Text("Capture region", style = MaterialTheme.typography.titleMedium)
+    Spacer(Modifier.height(4.dp))
+    Text(
+        "Crop the captured screenshot before OCR. Cuts down on noise from sidebars / overlay controls and gives Anki cards a clean image.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+    Spacer(Modifier.height(8.dp))
+
+    androidx.compose.foundation.layout.FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        CropPreset.entries.forEach { preset ->
+            FilterChip(
+                selected = preset == config.cropPreset,
+                onClick = { onChange(config.copy(cropPreset = preset)) },
+                label = { Text(preset.displayName) }
+            )
+        }
+    }
+
+    if (config.cropPreset == CropPreset.CUSTOM) {
+        Spacer(Modifier.height(12.dp))
+        val hasSample = remember {
+            java.io.File(context.cacheDir, "crop_picker_sample.jpg").exists()
+        }
+        Button(
+            onClick = {
+                if (hasSample) onOpenCropPicker()
+                else android.widget.Toast.makeText(
+                    context,
+                    "Capture once with the floating button first, then come back here.",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(if (hasSample) "Adjust on last capture" else "Capture a screenshot first")
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "The crop is drawn on the last screenshot you captured with the floating button. Switch to your target app, tap the floating button once to capture, then return here.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(8.dp))
+        CropPreview(
+            left = config.customCropLeft,
+            top = config.customCropTop,
+            right = config.customCropRight,
+            bottom = config.customCropBottom
+        )
+    }
+}
+
+@Composable
+private fun CropPreview(left: Float, top: Float, right: Float, bottom: Float) {
+    val outline = MaterialTheme.colorScheme.outline
+    val accent = MaterialTheme.colorScheme.primary
+    androidx.compose.foundation.Canvas(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(120.dp)
+    ) {
+        val w = size.width
+        val h = size.height
+        // Frame
+        drawRect(
+            color = outline,
+            topLeft = androidx.compose.ui.geometry.Offset(0f, 0f),
+            size = size,
+            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2f)
+        )
+        // Selection
+        val selLeft = left * w
+        val selTop = top * h
+        val selWidth = (right - left).coerceAtLeast(0f) * w
+        val selHeight = (bottom - top).coerceAtLeast(0f) * h
+        drawRect(
+            color = accent.copy(alpha = 0.25f),
+            topLeft = androidx.compose.ui.geometry.Offset(selLeft, selTop),
+            size = androidx.compose.ui.geometry.Size(selWidth, selHeight)
+        )
+        drawRect(
+            color = accent,
+            topLeft = androidx.compose.ui.geometry.Offset(selLeft, selTop),
+            size = androidx.compose.ui.geometry.Size(selWidth, selHeight),
+            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3f)
+        )
     }
 }

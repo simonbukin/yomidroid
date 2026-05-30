@@ -34,6 +34,12 @@ class OverlayTextView(
     private val unifiedContext: UnifiedOcrContext? = null,  // Unified context for cross-line search
     private val scaleX: Float = 1f,  // Scale factor: screenWidth / bitmapWidth
     private val scaleY: Float = 1f,  // Scale factor: screenHeight / bitmapHeight
+    /**
+     * OCR coords are in cropped-bitmap space. Add these (in original-bitmap
+     * pixels) before scaling to recover the on-screen position.
+     */
+    private val cropOffsetX: Int = 0,
+    private val cropOffsetY: Int = 0,
     private val highlightColor: Int = Color.argb(60, 255, 200, 0),  // Configurable highlight color
     private val onTextTapped: (OcrResult, Int) -> Unit,  // Changed: now passes OcrResult instead of String
     private val onDismissRequested: () -> Unit = {},
@@ -58,10 +64,10 @@ class OverlayTextView(
      */
     private fun Rect.toScreenCoords(): RectF {
         return RectF(
-            left * scaleX,
-            top * scaleY,
-            right * scaleX,
-            bottom * scaleY
+            (left + cropOffsetX) * scaleX,
+            (top + cropOffsetY) * scaleY,
+            (right + cropOffsetX) * scaleX,
+            (bottom + cropOffsetY) * scaleY
         )
     }
 
@@ -274,10 +280,10 @@ class OverlayTextView(
                 var right = Float.MIN_VALUE
                 var bottom = Float.MIN_VALUE
                 for (bounds in result.charBounds) {
-                    left = minOf(left, bounds.left * scaleX)
-                    top = minOf(top, bounds.top * scaleY)
-                    right = maxOf(right, bounds.right * scaleX)
-                    bottom = maxOf(bottom, bounds.bottom * scaleY)
+                    left = minOf(left, (bounds.left + cropOffsetX) * scaleX)
+                    top = minOf(top, (bounds.top + cropOffsetY) * scaleY)
+                    right = maxOf(right, (bounds.right + cropOffsetX) * scaleX)
+                    bottom = maxOf(bottom, (bounds.bottom + cropOffsetY) * scaleY)
                 }
                 // Apply overlay offset to convert to view-local space
                 RectF(left + ofsX, top + ofsY, right + ofsX, bottom + ofsY)
@@ -531,8 +537,8 @@ class OverlayTextView(
             for (mapping in crossLine) {
                 val bounds = mapping.ocrResult.charBounds.getOrNull(mapping.charIndex)
                 if (bounds != null) {
-                    val top = bounds.top * scaleY + offsetY
-                    val bottom = bounds.bottom * scaleY + offsetY
+                    val top = (bounds.top + cropOffsetY) * scaleY + offsetY
+                    val bottom = (bounds.bottom + cropOffsetY) * scaleY + offsetY
                     if (top < hlTop) hlTop = top
                     if (bottom > hlBottom) hlBottom = bottom
                 }
@@ -541,8 +547,8 @@ class OverlayTextView(
             for (i in 0 until selectedMatchLength) {
                 val bounds = selectedResult?.charBounds?.getOrNull(selectedCharIndex + i)
                 if (bounds != null) {
-                    val top = bounds.top * scaleY + offsetY
-                    val bottom = bounds.bottom * scaleY + offsetY
+                    val top = (bounds.top + cropOffsetY) * scaleY + offsetY
+                    val bottom = (bounds.bottom + cropOffsetY) * scaleY + offsetY
                     if (top < hlTop) hlTop = top
                     if (bottom > hlBottom) hlBottom = bottom
                 }
@@ -1077,9 +1083,9 @@ class OverlayTextView(
             screenCoordY = inputY + loc[1].toFloat()
         }
 
-        // Screen → bitmap
-        val bitmapX = screenCoordX / scaleX
-        val bitmapY = screenCoordY / scaleY
+        // Screen → cropped-bitmap (reverse of toScreenCoords).
+        val bitmapX = screenCoordX / scaleX - cropOffsetX
+        val bitmapY = screenCoordY / scaleY - cropOffsetY
 
         // First try: direct containment — is the tap inside any character's bounding box?
         for ((index, bounds) in result.charBounds.withIndex()) {
@@ -1223,10 +1229,10 @@ class OverlayTextView(
         val lastBounds = selectedResult?.charBounds?.getOrNull(selectedCharIndex + selectedMatchLength - 1)
 
         if (firstBounds != null && lastBounds != null) {
-            val centerX = (firstBounds.left + lastBounds.right) / 2f * scaleX
+            val centerX = ((firstBounds.left + lastBounds.right) / 2f + cropOffsetX) * scaleX
             popupX = centerX
         } else if (firstBounds != null) {
-            popupX = firstBounds.centerX() * scaleX
+            popupX = (firstBounds.centerX() + cropOffsetX) * scaleX
         } else {
             popupX = cursorX
         }
@@ -1369,8 +1375,8 @@ class OverlayTextView(
             val firstBounds = firstMapping.ocrResult.charBounds.getOrNull(firstMapping.charIndex)
             if (firstBounds != null) {
                 // Center horizontally over the match start
-                popupX = firstBounds.centerX() * scaleX
-                popupY = firstBounds.top * scaleY
+                popupX = (firstBounds.centerX() + cropOffsetX) * scaleX
+                popupY = (firstBounds.top + cropOffsetY) * scaleY
             }
         }
 
@@ -1470,7 +1476,8 @@ class OverlayTextView(
         val sorted = adjustedResults.sortedBy { it.first.lineBounds.top }
         return sorted.mapNotNull { (result, _) ->
             val chars = result.charBounds.map { b ->
-                (b.centerX() * scaleX + offsetX) to (b.centerY() * scaleY + offsetY)
+                ((b.centerX() + cropOffsetX) * scaleX + offsetX) to
+                    ((b.centerY() + cropOffsetY) * scaleY + offsetY)
             }
             chars.ifEmpty { null }
         }

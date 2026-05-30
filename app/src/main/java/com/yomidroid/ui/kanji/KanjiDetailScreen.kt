@@ -38,6 +38,7 @@ fun KanjiDetailScreen(
     val context = LocalContext.current
     val library = remember { KanjiLibrary.getInstance(context) }
     val ttsManager = remember { TtsManager.getInstance(context) }
+    val dictionaryEngine = remember { DictionaryEngine(context) }
 
     val info = remember(character) { library.get(character) }
 
@@ -51,7 +52,7 @@ fun KanjiDetailScreen(
             val terms = db.findWordsContainingKanji(character, limit = 10)
             terms.mapNotNull { td ->
                 // Re-look-up each term so we get rich entries (pitch, frequency, glosses, etc.)
-                DictionaryEngine(context).searchTerm(td.expression).firstOrNull()
+                dictionaryEngine.searchTerm(td.expression).firstOrNull()
             }
         }
         exampleEntries = entries
@@ -90,6 +91,7 @@ fun KanjiDetailScreen(
                 loading = exampleLoading,
                 entries = exampleEntries,
                 onOpenKanji = onOpenKanji,
+                dictionaryEngine = dictionaryEngine,
             )
         }
     }
@@ -259,6 +261,7 @@ private fun ExampleWordsCard(
     loading: Boolean,
     entries: List<DictionaryEntry>,
     onOpenKanji: (String) -> Unit,
+    dictionaryEngine: DictionaryEngine,
 ) {
     Card {
         Column(
@@ -289,6 +292,7 @@ private fun ExampleWordsCard(
                     DictionaryEntryWebView(
                         entries = entries,
                         onOpenKanji = onOpenKanji,
+                        dictionaryEngine = dictionaryEngine,
                     )
                 }
             }

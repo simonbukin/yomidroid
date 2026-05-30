@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Rect
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -14,6 +15,7 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
+import android.widget.Toast
 import com.yomidroid.MainActivity
 import com.yomidroid.dictionary.DictionaryEntry
 import com.yomidroid.dictionary.KanjiSimilarity
@@ -42,6 +44,8 @@ class OverlayPopupWebView(private val context: Context) {
     private var currentMatchedText: String? = null
     private var onAnkiExport: ((DictionaryEntry, Int) -> Unit)? = null
     private var onCorrection: ((String) -> Unit)? = null
+    private var onLookupTerm: ((String) -> Unit)? = null
+    private var onOpenExternal: ((String) -> Unit)? = null
     private var onRequestRanking: ((Char) -> Unit)? = null
     private var onEditOcrInApp: (() -> Unit)? = null
     private val handler = Handler(Looper.getMainLooper())
@@ -81,7 +85,9 @@ class OverlayPopupWebView(private val context: Context) {
         onCorrection: ((String) -> Unit)? = null,
         originalMatchedText: String? = null,
         onRequestRanking: ((Char) -> Unit)? = null,
-        onEditOcrInApp: (() -> Unit)? = null
+        onEditOcrInApp: (() -> Unit)? = null,
+        onLookupTerm: ((String) -> Unit)? = null,
+        onOpenExternal: ((String) -> Unit)? = null
     ) {
         if (entries.isEmpty()) return
 
@@ -90,6 +96,8 @@ class OverlayPopupWebView(private val context: Context) {
         this.currentMatchedText = entries.firstOrNull()?.matchedText
         this.onAnkiExport = onAnkiExport
         this.onCorrection = onCorrection
+        this.onLookupTerm = onLookupTerm
+        this.onOpenExternal = onOpenExternal
         this.onRequestRanking = onRequestRanking
         this.onEditOcrInApp = onEditOcrInApp
         this.maxPopupWidth = maxWidth
@@ -403,6 +411,45 @@ class OverlayPopupWebView(private val context: Context) {
         fun editOcrInApp() {
             val cb = onEditOcrInApp ?: return
             handler.post { cb() }
+        }
+
+        @JavascriptInterface
+        fun lookupTerm(query: String) {
+            val cb = onLookupTerm ?: return
+            val q = query.trim()
+            if (q.isEmpty()) return
+            handler.post { cb(q) }
+        }
+
+        @JavascriptInterface
+        fun lookupTermWithParams(paramsJson: String) {
+            val cb = onLookupTerm ?: return
+            val query = try {
+                org.json.JSONObject(paramsJson).optString("query", "").trim()
+            } catch (e: Exception) { "" }
+            if (query.isEmpty()) return
+            handler.post { cb(query) }
+        }
+
+        @JavascriptInterface
+        fun openExternal(url: String) {
+            val u = url.trim()
+            if (!(u.startsWith("https://") || u.startsWith("http://"))) return
+            handler.post {
+                val override = onOpenExternal
+                if (override != null) override(u) else defaultOpenExternal(u)
+            }
+        }
+    }
+
+    private fun defaultOpenExternal(url: String) {
+        try {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to open external link: ${e.message}")
+            Toast.makeText(context, "Couldn't open link", Toast.LENGTH_SHORT).show()
         }
     }
 }

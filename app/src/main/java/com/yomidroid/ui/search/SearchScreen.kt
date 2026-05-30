@@ -263,7 +263,12 @@ fun SearchScreen(onOpenKanji: (String) -> Unit = {}) {
                                 )
                             }
                             items(visibleWords, key = { "dict_${it.id}_${it.source}" }) { entry ->
-                                DictResultCard(entry = entry, ttsManager = ttsManager)
+                                DictResultCard(
+                                    entry = entry,
+                                    ttsManager = ttsManager,
+                                    dictionaryEngine = dictionaryEngine,
+                                    onOpenKanji = onOpenKanji
+                                )
                             }
                         }
 
@@ -352,16 +357,25 @@ private fun KanjiResultStrip(
 }
 
 @Composable
-private fun DictResultCard(entry: DictionaryEntry, ttsManager: TtsManager) {
+private fun DictResultCard(
+    entry: DictionaryEntry,
+    ttsManager: TtsManager,
+    dictionaryEngine: DictionaryEngine,
+    onOpenKanji: (String) -> Unit
+) {
     var expanded by remember { mutableStateOf(false) }
 
     Card(
-        modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded },
+        modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant
         )
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
+            // Only the always-visible header toggles expansion. Keeping the
+            // clickable off the expanded body means taps on structured-content
+            // links inside the WebView don't also collapse the card.
+            Column(modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded }) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -418,6 +432,7 @@ private fun DictResultCard(entry: DictionaryEntry, ttsManager: TtsManager) {
                 overflow = TextOverflow.Ellipsis,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            }
 
             AnimatedVisibility(
                 visible = expanded,
@@ -428,6 +443,8 @@ private fun DictResultCard(entry: DictionaryEntry, ttsManager: TtsManager) {
                     HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                     DictionaryEntryWebView(
                         entries = listOf(entry),
+                        onOpenKanji = onOpenKanji,
+                        dictionaryEngine = dictionaryEngine,
                         modifier = Modifier.fillMaxWidth()
                     )
                 }

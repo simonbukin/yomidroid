@@ -107,6 +107,18 @@ interface LookupHistoryDao {
 
     @Query("SELECT COUNT(DISTINCT word) FROM lookup_history")
     suspend fun countUniqueWords(): Int
+
+    @Query("SELECT COUNT(*) FROM lookup_history")
+    suspend fun count(): Int
+
+    @Query("SELECT * FROM lookup_history ORDER BY timestamp ASC LIMIT :n")
+    suspend fun getOldest(n: Int): List<LookupHistoryEntity>
+
+    @Query("SELECT * FROM lookup_history WHERE timestamp < :cutoff")
+    suspend fun getOlderThan(cutoff: Long): List<LookupHistoryEntity>
+
+    @Query("DELETE FROM lookup_history WHERE id IN (:ids)")
+    suspend fun deleteByIds(ids: List<Long>)
 }
 
 @Dao
