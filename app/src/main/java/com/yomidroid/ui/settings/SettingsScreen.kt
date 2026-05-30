@@ -31,6 +31,7 @@ fun SettingsScreen(
     onOpenTranslationSettings: () -> Unit,
     onOpenInputSettings: () -> Unit,
     onOpenDictionarySettings: () -> Unit,
+    onOpenHistorySettings: () -> Unit,
     onOpenAccessibilitySettings: () -> Unit
 ) {
     val context = LocalContext.current
@@ -180,6 +181,22 @@ fun SettingsScreen(
                 title = "Anki Export",
                 subtitle = "Configure deck, note type, and field mappings",
                 onClick = onOpenAnkiSettings
+            )
+
+            Divider(modifier = Modifier.padding(horizontal = 16.dp))
+
+            // Data Section — history retention / storage
+            Text(
+                text = "Data",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+            )
+
+            SettingsItem(
+                title = "History",
+                subtitle = "Limit lookups by count or age, prune screenshots",
+                onClick = onOpenHistorySettings
             )
 
             Divider(modifier = Modifier.padding(horizontal = 16.dp))

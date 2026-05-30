@@ -70,11 +70,23 @@ function scrollContent(px) {
     window.scrollBy(0, px);
 }
 
+// Returns the rendered content height in CSS pixels, viewport-independent.
+// `document.body.scrollHeight` can't fall below the WebView's clientHeight, so
+// when the host sizes the WebView to scrollHeight you get a feedback loop. We
+// measure the dictionary container directly instead.
+function measureContentHeight() {
+    var div = document.getElementById('dictionary-entries');
+    if (div) {
+        return Math.ceil(div.offsetTop + div.offsetHeight);
+    }
+    return document.body.scrollHeight;
+}
+
 function reportHeight() {
     requestAnimationFrame(function() {
         setTimeout(function() {
             if (window.YomidroidPopup) {
-                window.YomidroidPopup.reportContentHeight(document.body.scrollHeight);
+                window.YomidroidPopup.reportContentHeight(measureContentHeight());
             }
         }, 30);
     });
@@ -1034,8 +1046,8 @@ function renderStructuredContent(node, dictId) {
 
         if (tag === 'a') {
             el = document.createElement('a');
-            if (node.href) el.href = node.href;
             el.className = 'sc-a';
+            classifyAndWireLink(el, node);
         } else {
             el = document.createElement(tag);
             el.className = 'sc-' + tag;
@@ -1051,6 +1063,111 @@ function renderStructuredContent(node, dictId) {
     }
 
     return document.createTextNode(String(node));
+}
+
+// Parse a `?key=value&…`-style href into a flat params object. Uses a plain
+// regex split rather than `new URL()` because the URL constructor's behavior
+// with the file:// base URI inside Android WebView is unreliable and silently
+// throwing here would leave links inert.
+function parseQueryParams(href) {
+    var out = {};
+    if (typeof href !== 'string') return out;
+    var qIdx = href.indexOf('?');
+    if (qIdx < 0) return out;
+    var qs = href.substring(qIdx + 1);
+    var hashIdx = qs.indexOf('#');
+    if (hashIdx !== -1) qs = qs.substring(0, hashIdx);
+    if (!qs) return out;
+    var parts = qs.split('&');
+    for (var i = 0; i < parts.length; i++) {
+        var eq = parts[i].indexOf('=');
+        var rawKey = eq === -1 ? parts[i] : parts[i].substring(0, eq);
+        var rawVal = eq === -1 ? '' : parts[i].substring(eq + 1);
+        if (!rawKey) continue;
+        var key, val;
+        try { key = decodeURIComponent(rawKey.replace(/\+/g, ' ')); } catch (e) { key = rawKey; }
+        try { val = decodeURIComponent(rawVal.replace(/\+/g, ' ')); } catch (e) { val = rawVal; }
+        out[key] = val;
+    }
+    return out;
+}
+
+// Classify a structured-content <a> by its href and wire the appropriate click
+// behavior. Yomitan's schema admits exactly three href prefixes: `?` (internal
+// search, forwarded as URL search params), `https://`, and `http://` (external,
+// handed off to the system browser). `bword://` is kept as a legacy fallback
+// for older EPWING-derived Yomitan-format dictionaries; real Jitendex content
+// never emits it. Everything else falls through inert.
+//
+// On internal links we strip the raw href so WebView's long-press context
+// menu doesn't surface "?query=…" as gibberish. External links keep their
+// href so "Copy link"/"Share" remain useful via long-press.
+function classifyAndWireLink(el, node) {
+    var href = (node && typeof node.href === 'string') ? node.href : '';
+
+    if (href.charAt(0) === '?') {
+        var params = parseQueryParams(href);
+        var query = (params.query || '').trim();
+        el.dataset.linkKind = 'internal';
+        el.style.cursor = query ? 'pointer' : 'default';
+        el.setAttribute('role', 'link');
+        el.addEventListener('click', function(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            if (!query) return;
+            var bridge = window.YomidroidPopup;
+            if (!bridge) return;
+            if (typeof bridge.lookupTermWithParams === 'function') {
+                bridge.lookupTermWithParams(JSON.stringify(params));
+            } else if (typeof bridge.lookupTerm === 'function') {
+                bridge.lookupTerm(query);
+            }
+        });
+        return;
+    }
+
+    if (href.indexOf('bword://') === 0) {
+        var target = href.substring('bword://'.length);
+        var hashIdx = target.indexOf('#');
+        if (hashIdx !== -1) target = target.substring(0, hashIdx);
+        try { target = decodeURIComponent(target.replace(/\+/g, ' ')); } catch (e) { /* keep raw */ }
+        target = target.trim();
+        el.dataset.linkKind = 'legacy-bword';
+        el.style.cursor = target ? 'pointer' : 'default';
+        el.setAttribute('role', 'link');
+        el.addEventListener('click', function(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            if (!target) return;
+            var bridge = window.YomidroidPopup;
+            if (bridge && typeof bridge.lookupTerm === 'function') {
+                bridge.lookupTerm(target);
+            }
+        });
+        return;
+    }
+
+    if (href.indexOf('https://') === 0 || href.indexOf('http://') === 0) {
+        el.href = href;
+        el.dataset.linkKind = 'external';
+        el.style.cursor = 'pointer';
+        el.addEventListener('click', function(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            var bridge = window.YomidroidPopup;
+            if (bridge && typeof bridge.openExternal === 'function') {
+                bridge.openExternal(href);
+            }
+        });
+        return;
+    }
+
+    // Unrecognized scheme (or empty href) — render but inert.
+    el.dataset.linkKind = 'inert';
+    el.addEventListener('click', function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+    });
 }
 
 function applyNodeAttributes(el, node) {

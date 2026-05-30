@@ -323,6 +323,7 @@ private fun LookupTab(onOpenKanji: ((String) -> Unit)? = null) {
                 onOpenKanji = onOpenKanji,
                 onCorrection = { corrected -> applyCorrection(corrected) },
                 onRequestRanking = { ch -> computeRanking(ch) },
+                dictionaryEngine = dictionaryEngine,
                 onEditOcrInApp = { startEditFromInApp() },
                 matchedText = matchedText,
                 originalMatchedText = originalMatchedText,
@@ -592,7 +593,7 @@ private fun ParseTab(
                         items = lookup.matches,
                         key = { match -> "match-${lookup.startInSentence}-${match.startIndex}-${match.matchedText}" }
                     ) { match ->
-                        DictionaryWordCard(match)
+                        DictionaryWordCard(match, dictionaryEngine)
                     }
                 }
             }
@@ -1205,19 +1206,23 @@ private fun BunsetsuHeader(bunsetsu: Bunsetsu) {
  * through multiple dictionaries / readings the way the overlay does.
  */
 @Composable
-private fun DictionaryWordCard(match: DictionaryWordMatch) {
+private fun DictionaryWordCard(match: DictionaryWordMatch, dictionaryEngine: DictionaryEngine) {
     val context = LocalContext.current
     val ttsManager = remember { TtsManager.getInstance(context) }
     var expanded by remember { mutableStateOf(false) }
     val best = match.best ?: return
 
     Card(
-        modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded },
+        modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant
         )
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
+            // Only the header toggles expansion; keeping the clickable off the
+            // expanded body means taps on the WebView (links, TTS, Anki) don't
+            // also collapse the card.
+            Column(modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded }) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -1277,6 +1282,7 @@ private fun DictionaryWordCard(match: DictionaryWordMatch) {
                 overflow = TextOverflow.Ellipsis,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            }
             AnimatedVisibility(
                 visible = expanded,
                 enter = expandVertically(),
@@ -1286,6 +1292,7 @@ private fun DictionaryWordCard(match: DictionaryWordMatch) {
                     HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                     DictionaryEntryWebView(
                         entries = match.candidates,
+                        dictionaryEngine = dictionaryEngine,
                         modifier = Modifier.fillMaxWidth()
                     )
                 }

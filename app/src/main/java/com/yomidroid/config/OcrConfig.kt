@@ -33,6 +33,21 @@ enum class MangaOcrCropScaling(val displayName: String) {
 }
 
 /**
+ * Aspect-ratio crop applied to the captured screenshot before OCR / overlay /
+ * Anki export. FULL leaves the bitmap untouched; ratio presets compute the
+ * largest centered rectangle of the given aspect ratio that fits inside the
+ * bitmap; CUSTOM uses [OcrConfig.customCrop*] normalized coordinates.
+ */
+enum class CropPreset(val displayName: String, val ratio: Float?) {
+    FULL("Full", null),
+    RATIO_16_9("16:9", 16f / 9f),
+    RATIO_4_3("4:3", 4f / 3f),
+    RATIO_3_2("3:2", 3f / 2f),
+    RATIO_1_1("1:1", 1f),
+    CUSTOM("Custom", null)
+}
+
+/**
  * Configuration for OCR settings.
  */
 data class OcrConfig(
@@ -48,7 +63,13 @@ data class OcrConfig(
      * boxes; replace ML Kit's text with Gemini's. Gives Gemini-quality
      * recognition with ML-Kit-quality bounds for cursor lookup.
      */
-    val geminiUseMlKitBounds: Boolean = true
+    val geminiUseMlKitBounds: Boolean = true,
+    val cropPreset: CropPreset = CropPreset.FULL,
+    /** Normalized (0..1) custom crop bounds, used only when [cropPreset] == CUSTOM. */
+    val customCropLeft: Float = 0f,
+    val customCropTop: Float = 0f,
+    val customCropRight: Float = 1f,
+    val customCropBottom: Float = 1f,
 )
 
 /**
@@ -70,6 +91,11 @@ class OcrConfigManager(context: Context) {
         private const val KEY_MANGA_OCR_MAX_SIDE_LEN = "manga_ocr_max_side_len"
         private const val KEY_MANGA_OCR_PREPROCESS = "manga_ocr_preprocess"
         private const val KEY_GEMINI_USE_MLKIT_BOUNDS = "gemini_use_mlkit_bounds"
+        private const val KEY_CROP_PRESET = "crop_preset"
+        private const val KEY_CROP_LEFT = "crop_left"
+        private const val KEY_CROP_TOP = "crop_top"
+        private const val KEY_CROP_RIGHT = "crop_right"
+        private const val KEY_CROP_BOTTOM = "crop_bottom"
     }
 
     fun getConfig(): OcrConfig {
@@ -86,6 +112,11 @@ class OcrConfigManager(context: Context) {
             MangaOcrCropScaling.BILINEAR
         )
 
+        val cropPreset = enumValueOrDefault(
+            prefs.getString(KEY_CROP_PRESET, null),
+            CropPreset.FULL
+        )
+
         return OcrConfig(
             selectedEngine = engine,
             fallbackToMlKit = prefs.getBoolean(KEY_FALLBACK_TO_MLKIT, true),
@@ -94,7 +125,12 @@ class OcrConfigManager(context: Context) {
             mangaOcrCropScaling = cropScaling,
             mangaOcrMaxSideLen = prefs.getInt(KEY_MANGA_OCR_MAX_SIDE_LEN, 2400),
             mangaOcrPreprocess = prefs.getBoolean(KEY_MANGA_OCR_PREPROCESS, true),
-            geminiUseMlKitBounds = prefs.getBoolean(KEY_GEMINI_USE_MLKIT_BOUNDS, true)
+            geminiUseMlKitBounds = prefs.getBoolean(KEY_GEMINI_USE_MLKIT_BOUNDS, true),
+            cropPreset = cropPreset,
+            customCropLeft = prefs.getFloat(KEY_CROP_LEFT, 0f),
+            customCropTop = prefs.getFloat(KEY_CROP_TOP, 0f),
+            customCropRight = prefs.getFloat(KEY_CROP_RIGHT, 1f),
+            customCropBottom = prefs.getFloat(KEY_CROP_BOTTOM, 1f)
         )
     }
 
@@ -108,6 +144,11 @@ class OcrConfigManager(context: Context) {
             .putInt(KEY_MANGA_OCR_MAX_SIDE_LEN, config.mangaOcrMaxSideLen)
             .putBoolean(KEY_MANGA_OCR_PREPROCESS, config.mangaOcrPreprocess)
             .putBoolean(KEY_GEMINI_USE_MLKIT_BOUNDS, config.geminiUseMlKitBounds)
+            .putString(KEY_CROP_PRESET, config.cropPreset.name)
+            .putFloat(KEY_CROP_LEFT, config.customCropLeft)
+            .putFloat(KEY_CROP_TOP, config.customCropTop)
+            .putFloat(KEY_CROP_RIGHT, config.customCropRight)
+            .putFloat(KEY_CROP_BOTTOM, config.customCropBottom)
             .apply()
     }
 

@@ -51,6 +51,8 @@ import com.yomidroid.ui.library.LibraryScreen
 import com.yomidroid.ui.now.NowScreen
 import com.yomidroid.ui.search.SearchScreen
 import com.yomidroid.ui.settings.DictionarySettingsScreen
+import com.yomidroid.ui.settings.HistorySettingsScreen
+import com.yomidroid.ui.settings.OcrCropPickerScreen
 import com.yomidroid.ui.settings.SettingsScreen
 import com.yomidroid.ui.settings.TranslationSettingsScreen
 import com.yomidroid.ui.theme.YomidroidTheme
@@ -70,6 +72,8 @@ sealed class Screen(val route: String) {
     object TranslationSettings : Screen("translation_settings")
     object InputSettings : Screen("input_settings")
     object DictionarySettings : Screen("dictionary_settings")
+    object HistorySettings : Screen("history_settings")
+    object OcrCropPicker : Screen("ocr_crop_picker")
 }
 
 class MainActivity : ComponentActivity() {
@@ -114,10 +118,15 @@ class MainActivity : ComponentActivity() {
                 when (currentScreen) {
                     Screen.AnkiSettings -> AnkiSettingsScreen(onBack = { currentScreen = Screen.Settings })
                     Screen.ColorSettings -> ColorSettingsScreen(onBack = { currentScreen = Screen.Settings })
-                    Screen.OcrSettings -> OcrSettingsScreen(onBack = { currentScreen = Screen.Settings })
+                    Screen.OcrSettings -> OcrSettingsScreen(
+                        onBack = { currentScreen = Screen.Settings },
+                        onOpenCropPicker = { currentScreen = Screen.OcrCropPicker }
+                    )
+                    Screen.OcrCropPicker -> OcrCropPickerScreen(onBack = { currentScreen = Screen.OcrSettings })
                     Screen.TranslationSettings -> TranslationSettingsScreen(onNavigateBack = { currentScreen = Screen.Settings })
                     Screen.InputSettings -> InputSettingsScreen(onBack = { currentScreen = Screen.Settings })
                     Screen.DictionarySettings -> DictionarySettingsScreen(onBack = { currentScreen = Screen.Settings })
+                    Screen.HistorySettings -> HistorySettingsScreen(onBack = { currentScreen = Screen.Settings })
                     is Screen.HistoryDetail -> {
                         val detailScreen = currentScreen as Screen.HistoryDetail
                         HistoryDetailScreen(
@@ -235,6 +244,7 @@ fun MainAppContent(
                     onOpenTranslationSettings = { onNavigate(Screen.TranslationSettings) },
                     onOpenInputSettings = { onNavigate(Screen.InputSettings) },
                     onOpenDictionarySettings = { onNavigate(Screen.DictionarySettings) },
+                    onOpenHistorySettings = { onNavigate(Screen.HistorySettings) },
                     onOpenAccessibilitySettings = onOpenAccessibilitySettings
                 )
                 else -> NowScreen()

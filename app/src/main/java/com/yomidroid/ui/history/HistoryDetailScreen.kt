@@ -323,6 +323,7 @@ fun HistoryDetailScreen(
                                 DictionaryEntryWebView(
                                     entries = dictEntries,
                                     onOpenKanji = onOpenKanji,
+                                    dictionaryEngine = dictionaryEngine,
                                     modifier = Modifier.fillMaxWidth()
                                 )
                             }
