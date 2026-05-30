@@ -1,8 +1,17 @@
+import java.io.File
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("com.google.devtools.ksp")
 }
+
+// ccache dramatically speeds up the llama.cpp/NDK rebuild on CI by caching object
+// compilation. Only wire it in when ccache is actually on PATH so local builds without
+// it are unaffected (CI installs it via hendrikmuhs/ccache-action).
+val ccacheAvailable: Boolean = System.getenv("PATH")
+    ?.split(File.pathSeparator)
+    ?.any { dir -> File(dir, "ccache").canExecute() } == true
 
 android {
     namespace = "com.yomidroid"
@@ -18,9 +27,11 @@ android {
         versionCode = 1
         versionName = "1.0"
 
-        // Only build for arm64 (most modern phones) and x86_64 (emulator)
+        // arm64 only. The daily-driver device and the Apple Silicon dev machine's
+        // native emulator image are both arm64; x86_64 only added ~120 MB for x86
+        // emulators/Chromebooks we don't target. Use an arm64-v8a AVD for emulation.
         ndk {
-            abiFilters += listOf("arm64-v8a", "x86_64")
+            abiFilters += "arm64-v8a"
         }
 
         externalNativeBuild {
@@ -32,6 +43,10 @@ android {
                 arguments += "-DGGML_NATIVE=OFF"
                 arguments += "-DGGML_LLAMAFILE=OFF"
                 arguments += "-DGGML_OPENMP=OFF"
+                if (ccacheAvailable) {
+                    arguments += "-DCMAKE_C_COMPILER_LAUNCHER=ccache"
+                    arguments += "-DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
+                }
             }
         }
     }

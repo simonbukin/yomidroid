@@ -14,8 +14,12 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      # Hash compiler contents rather than mtime so the ccache stays valid across runs
+      # (setup-android reinstalls the NDK each run, changing binary mtimes).
+      CCACHE_COMPILERCHECK: content
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
 
@@ -37,6 +41,12 @@ jobs:
 
       - name: Set up Gradle (with caching)
         uses: gradle/actions/setup-gradle@v4
+
+      - name: Set up ccache (caches the llama.cpp/NDK native compile)
+        uses: hendrikmuhs/ccache-action@v1
+        with:
+          key: ${{ github.job }}-ndk26-arm64
+          max-size: 500M
 
       - name: Build debug APK
         run: ./gradlew assembleDebug --no-daemon --stacktrace
