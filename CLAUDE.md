@@ -30,8 +30,8 @@ It also includes: an in-app workspace with grammar parsing (Kuromoji + DOJG), tr
 |---|---|
 | `service/` | AccessibilityService, FAB, overlay views, QS tile services |
 | `ocr/` | OCR engines (ML Kit, manga-ocr ONNX, RapidOCR) and the `OcrEngineFactory` |
-| `dictionary/` | `DictionaryEngine`, `LanguageTransformer` (Yomitan deinflection), entry models, serialization |
-| `data/` | `DictionaryDb` (multi-DB SQLite manager), Room `AppDatabase` for history, Yomitan zip import |
+| `dictionary/` | `DictionaryEngine`, `HoshiDicts` (Hoshidicts C++23/JNI backend), `HoshiEntryMapper`, entry models, serialization |
+| `data/` | `DictionaryDb` (Hoshidicts coordinator), `KanjiWordIndex`, Room `AppDatabase` for history, Yomitan zip import |
 | `grammar/` | DOJG grammar resolver, Kuromoji morphology, JLPT grammar library |
 | `translation/` | `TranslationService`, backends (Gemini Flash, on-device LLM, ML Kit fallback) |
 | `llm/` | llama.cpp JNI bindings + on-device model management |
@@ -50,7 +50,7 @@ It also includes: an in-app workspace with grammar parsing (Kuromoji + DOJG), tr
   - `service/OverlayPopupWebView.kt` + `assets/popup/popup.html|js|css` — the primary path. WebView-rendered for rich pitch-accent SVGs, furigana, frequency badges, action buttons.
   - `service/OverlayTextView.kt` (Canvas) — fallback for in-place rendering. Keep parity with the WebView behavior when changing entry rendering.
 - **The same WebView renderer is reused in-app** via `ui/components/DictionaryEntryWebView.kt` (History detail, Now → Lookup). The JS bridge (`YomidroidPopup`) handles `ankiExport`, `speak`, and content-height reporting.
-- **Multi-dictionary**, not a merged blob. `data/DictionaryDb.kt` holds maps of dictId → SQLiteDatabase for term, frequency, pitch, and kanji databases, with a user-defined priority order. `DictionaryEngine` queries each variant produced by `LanguageTransformer` against the priority chain.
+- **Dictionary backend is Hoshidicts** (C++23, vendored submodule at `app/src/main/cpp/hoshidicts`, `main-mit` branch — MIT, Jiten-based deconjugator). Yomitan `.zip`s import into a compact mmap'd binary format (one folder per dict under `filesDir/dictionaries/<dictId>/<title>`); term/frequency/pitch/kanji lookups + deconjugation run natively via `dictionary/HoshiDicts.kt` (JNI). `data/DictionaryDb.kt` is the coordinator (config→native reset+add in priority order + per-dict metadata); `DictionaryEngine` maps native `HoshiTerm` results to `DictionaryEntry` via `HoshiEntryMapper`. Hoshidicts has no substring scan, so kanji "words containing" is served by `data/KanjiWordIndex.kt` (a reverse index built at import). NDK 26.1's libc++ lacks `std::ranges::to`; a guarded shim at `cpp/hoshi_compat.hpp` is force-included into the hoshidicts target.
 - **Singletons** for shared infra: `DictionaryDb.getInstance(context)`, `AppDatabase.getInstance(context)`, `TtsManager.getInstance(context)`, `MangaOcrModelManager.getInstance(context)`, etc. Mirror this pattern when adding new managers.
 - **Coroutines.** DB and OCR work on `Dispatchers.IO`; UI updates via Compose state.
 
@@ -74,12 +74,13 @@ It also includes: an in-app workspace with grammar parsing (Kuromoji + DOJG), tr
 
 - Kotlin 1.9.20, Jetpack Compose, Material3
 - minSdk 26 (Android 8.0), compileSdk/targetSdk 34 (Android 14)
-- NDK 26.1 + CMake for llama.cpp (arm64-v8a, x86_64)
+- NDK 26.1 + CMake for llama.cpp and the Hoshidicts dictionary backend (arm64-v8a)
 - ML Kit (Japanese text recognition + offline translation), ONNX Runtime (manga-ocr / RapidOCR), OpenCV (image preprocessing)
-- Room (history), SQLite (dictionaries)
+- Room (history), Hoshidicts (dictionaries)
 - AnkiDroid API for flashcard export
 
 ## Licensing
 
-- Deinflection rules in `LanguageTransformer.kt` are GPL-3.0 (ported from Yomitan).
+- Deconjugation is handled natively by the Hoshidicts submodule (`main-mit` branch, MIT-licensed; Jiten-based rules). The previous GPL-3.0 `LanguageTransformer.kt` was removed.
+- Hoshidicts vendors MIT/BSD-licensed C++ libraries (glaze, zstd, libdeflate, xxHash, unordered_dense, utfcpp).
 - Everything else is MIT. See `LICENSE`.

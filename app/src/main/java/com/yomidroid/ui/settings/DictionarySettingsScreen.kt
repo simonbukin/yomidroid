@@ -52,9 +52,6 @@ fun DictionarySettingsScreen(onBack: () -> Unit) {
     var importProgress by remember { mutableStateOf<ImportProgress?>(null) }
     var downloadingId by remember { mutableStateOf<String?>(null) }
     var showDeleteDialog by remember { mutableStateOf<String?>(null) }
-    var customCss by remember { mutableStateOf(configManager.getCustomCss() ?: "") }
-    var backfillTargetDictId by remember { mutableStateOf<String?>(null) }
-    var customCssFileName by remember { mutableStateOf<String?>(null) }
 
     fun refresh() {
         installed = configManager.getInstalledDictionaries()
@@ -121,70 +118,7 @@ fun DictionarySettingsScreen(onBack: () -> Unit) {
         }
     }
 
-    // Backfill file picker — user selects the original ZIP for a dictionary
-    val backfillPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        val dictId = backfillTargetDictId ?: return@rememberLauncherForActivityResult
-        if (uri == null) return@rememberLauncherForActivityResult
-        val dict = installed.find { it.id == dictId }
 
-        scope.launch {
-            importProgress = ImportProgress(
-                currentIndex = 0,
-                totalCount = 1,
-                currentName = dict?.title ?: dictId,
-                phase = "Starting backfill...",
-                progress = 0f
-            )
-
-            val result = importer.backfillRichContent(dictId, uri) { phase, progress ->
-                importProgress = ImportProgress(
-                    currentIndex = 0,
-                    totalCount = 1,
-                    currentName = dict?.title ?: dictId,
-                    phase = phase,
-                    progress = progress
-                )
-            }
-
-            importProgress = null
-            backfillTargetDictId = null
-            refresh()
-            reloadService()
-
-            val message = if (result.success) {
-                "Backfilled ${result.entryCount} entries with rich content"
-            } else {
-                result.error ?: "Backfill failed"
-            }
-            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
-        }
-    }
-
-    // CSS file picker
-    val cssFilePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        try {
-            val cssContent = context.contentResolver.openInputStream(uri)?.bufferedReader()?.readText()
-            if (cssContent != null) {
-                customCss = cssContent
-                configManager.setCustomCss(cssContent)
-                // Get filename for display
-                val fileName = try {
-                    context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
-                        if (cursor.moveToFirst()) cursor.getString(0) else null
-                    }
-                } catch (e: Exception) { null }
-                customCssFileName = fileName
-                Toast.makeText(context, "Loaded ${fileName ?: "CSS file"}", Toast.LENGTH_SHORT).show()
-            }
-        } catch (e: Exception) {
-            Toast.makeText(context, "Failed to read CSS file: ${e.message}", Toast.LENGTH_LONG).show()
-        }
-    }
 
     // Multi-file picker
     val multiFilePickerLauncher = rememberLauncherForActivityResult(
@@ -262,17 +196,7 @@ fun DictionarySettingsScreen(onBack: () -> Unit) {
                     },
                     onDelete = {
                         showDeleteDialog = dict.id
-                    },
-                    onBackfill = if (dict.type == DictSourceType.DICTIONARY) {
-                        {
-                            backfillTargetDictId = dict.id
-                            backfillPickerLauncher.launch(arrayOf(
-                                "application/zip",
-                                "application/octet-stream",
-                                "application/x-zip-compressed"
-                            ))
-                        }
-                    } else null
+                    }
                 )
 
                 if (index < installed.size - 1) {
@@ -340,7 +264,14 @@ fun DictionarySettingsScreen(onBack: () -> Unit) {
                 )
 
                 for (dict in dicts) {
-                    val isInstalled = installed.any { it.title.contains(dict.name, ignoreCase = true) }
+                    // Match either direction: a dict's real title (from its index.json)
+                    // can be shorter than the catalog display name (title "JPDB" vs
+                    // catalog "JPDB Frequency") or longer (title "Jitendex.org [..]"
+                    // vs catalog "Jitendex").
+                    val isInstalled = installed.any {
+                        it.title.contains(dict.name, ignoreCase = true) ||
+                            dict.name.contains(it.title, ignoreCase = true)
+                    }
 
                     Row(
                         modifier = Modifier
@@ -426,135 +357,6 @@ fun DictionarySettingsScreen(onBack: () -> Unit) {
             }
 
             Spacer(modifier = Modifier.height(24.dp))
-
-            // Custom CSS Section
-            Text(
-                text = "Custom CSS",
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
-            )
-
-            Text(
-                text = "Custom CSS applied to rich dictionary definitions. Yomitan-compatible CSS variables supported.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp)
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Load CSS file button
-            FilledTonalButton(
-                onClick = {
-                    cssFilePickerLauncher.launch(arrayOf(
-                        "text/css",
-                        "text/plain",
-                        "application/octet-stream"
-                    ))
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp)
-            ) {
-                Icon(
-                    Icons.Default.FileOpen,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Load CSS File")
-            }
-
-            if (customCss.isNotBlank()) {
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // Show loaded CSS info
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
-                    )
-                ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = customCssFileName ?: "Custom CSS",
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.Medium
-                            )
-                            IconButton(
-                                onClick = {
-                                    customCss = ""
-                                    customCssFileName = null
-                                    configManager.setCustomCss(null)
-                                    Toast.makeText(context, "CSS cleared", Toast.LENGTH_SHORT).show()
-                                },
-                                modifier = Modifier.size(28.dp)
-                            ) {
-                                Icon(
-                                    Icons.Default.Close,
-                                    contentDescription = "Clear CSS",
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
-                        Text(
-                            text = "${customCss.lines().size} lines",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Manual CSS editor (collapsible)
-            var showCssEditor by remember { mutableStateOf(false) }
-            TextButton(
-                onClick = { showCssEditor = !showCssEditor },
-                modifier = Modifier.padding(horizontal = 8.dp)
-            ) {
-                Text(if (showCssEditor) "Hide CSS Editor" else "Edit CSS Manually")
-            }
-
-            if (showCssEditor) {
-                OutlinedTextField(
-                    value = customCss,
-                    onValueChange = { customCss = it },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp),
-                    label = { Text("CSS") },
-                    placeholder = { Text(":root { --text-color: #fff; }") },
-                    minLines = 3,
-                    maxLines = 8,
-                    textStyle = MaterialTheme.typography.bodySmall.copy(
-                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
-                    )
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                FilledTonalButton(
-                    onClick = {
-                        configManager.setCustomCss(customCss.ifBlank { null })
-                        Toast.makeText(context, "CSS saved", Toast.LENGTH_SHORT).show()
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
-                ) {
-                    Text("Save CSS")
-                }
-            }
 
             Spacer(modifier = Modifier.height(16.dp))
         }
@@ -651,8 +453,7 @@ private fun InstalledDictionaryRow(
     onToggleEnabled: (Boolean) -> Unit,
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
-    onDelete: () -> Unit,
-    onBackfill: (() -> Unit)? = null
+    onDelete: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -736,25 +537,6 @@ private fun InstalledDictionaryRow(
             }
         }
 
-        // Backfill button for term dictionaries
-        if (onBackfill != null) {
-            TextButton(
-                onClick = onBackfill,
-                modifier = Modifier.padding(start = 40.dp),
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
-            ) {
-                Icon(
-                    Icons.Default.Refresh,
-                    contentDescription = null,
-                    modifier = Modifier.size(14.dp)
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    text = "Backfill rich content from ZIP",
-                    style = MaterialTheme.typography.labelSmall
-                )
-            }
-        }
     }
 }
 

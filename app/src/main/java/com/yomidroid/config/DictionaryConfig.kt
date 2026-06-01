@@ -107,24 +107,6 @@ class DictionaryConfigManager(context: Context) {
     }
 
     /**
-     * Get user custom CSS for dictionary rendering (WebView popups and Compose screens).
-     */
-    fun getCustomCss(): String? {
-        return prefs.getString("custom_css", null)
-    }
-
-    /**
-     * Set user custom CSS. Pass null to clear.
-     */
-    fun setCustomCss(css: String?) {
-        if (css.isNullOrBlank()) {
-            prefs.edit().remove("custom_css").apply()
-        } else {
-            prefs.edit().putString("custom_css", css).apply()
-        }
-    }
-
-    /**
      * Get dictionary-shipped CSS (from styles.css in Yomitan ZIP).
      * @return CSS string or null if the dictionary has no custom styles
      */

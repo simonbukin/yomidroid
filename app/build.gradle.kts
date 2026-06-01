@@ -27,6 +27,8 @@ android {
         versionCode = 1
         versionName = "1.0"
 
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
         // arm64 only. The daily-driver device and the Apple Silicon dev machine's
         // native emulator image are both arm64; x86_64 only added ~120 MB for x86
         // emulators/Chromebooks we don't target. Use an arm64-v8a AVD for emulation.
@@ -47,6 +49,10 @@ android {
                     arguments += "-DCMAKE_C_COMPILER_LAUNCHER=ccache"
                     arguments += "-DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
                 }
+                // Build only the two JNI bridge libraries (and their transitive
+                // deps: llama/ggml, hoshidicts/glaze/zstd/...). This keeps the
+                // hoshidicts CLI + benchmark executables out of the build.
+                targets += listOf("yomidroid_llm", "yomidroid_dict")
             }
         }
     }
@@ -145,4 +151,8 @@ dependencies {
 
     // AnkiDroid API for flashcard export
     implementation("com.github.ankidroid:Anki-Android:api-v1.1.0")
+
+    // Instrumented tests (Hoshidicts JNI round-trip on-device)
+    androidTestImplementation("androidx.test.ext:junit:1.1.5")
+    androidTestImplementation("androidx.test:runner:1.5.2")
 }

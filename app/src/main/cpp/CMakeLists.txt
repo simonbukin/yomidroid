@@ -40,3 +40,46 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
     android
     log
 )
+
+# ---------------------------------------------------------------------------
+# Hoshidicts dictionary backend (C++23) + JNI bridge.
+#
+# Hoshidicts' own CMakeLists builds the static `hoshidicts` lib plus a CLI and
+# benchmark executables. We only want the lib, so we pull it in via
+# add_subdirectory (which also wires glaze/zstd/libdeflate/unordered_dense) and
+# restrict the targets Gradle actually compiles via android.defaultConfig
+# .externalNativeBuild.cmake.targets — the executables are configured but never
+# built. Force the hoshidicts lib + its deps static so we ship one extra .so
+# (yomidroid_dict) rather than a chain of shared libs; llama above already
+# enabled BUILD_SHARED_LIBS globally, so we shadow it for this subtree only.
+set(HOSHI_SRC ${CMAKE_CURRENT_LIST_DIR}/hoshidicts)
+set(BUILD_SHARED_LIBS OFF)
+add_subdirectory(${HOSHI_SRC} build-hoshidicts)
+
+# NDK 26.1's libc++ (LLVM 17) lacks std::ranges::to. Force-include a guarded
+# shim into the hoshidicts sources without modifying the vendored submodule.
+target_compile_options(hoshidicts PRIVATE
+    -include ${CMAKE_CURRENT_LIST_DIR}/hoshi_compat.hpp
+)
+
+add_library(yomidroid_dict SHARED
+    dict_jni.cpp
+)
+
+# The bridge calls C++23 ranges in the hoshidicts headers transitively; compile
+# it at the same standard as the library it links.
+set_target_properties(yomidroid_dict PROPERTIES
+    CXX_STANDARD 23
+    CXX_STANDARD_REQUIRED ON
+)
+
+target_include_directories(yomidroid_dict PRIVATE
+    ${HOSHI_SRC}/include
+    ${HOSHI_SRC}/external/utfcpp/source
+)
+
+target_link_libraries(yomidroid_dict
+    hoshidicts
+    android
+    log
+)

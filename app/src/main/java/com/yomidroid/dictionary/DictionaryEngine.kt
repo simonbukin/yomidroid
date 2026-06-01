@@ -1,24 +1,28 @@
 package com.yomidroid.dictionary
 
 import android.content.Context
-import com.google.gson.Gson
-import com.google.gson.reflect.TypeToken
 import com.yomidroid.data.DictionaryDb
-import com.yomidroid.data.TermData
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * Dictionary engine implementing Yomitan-style longest-match lookup with deinflection.
+ * Dictionary engine implementing Yomitan-style longest-match lookup with
+ * deconjugation.
+ *
+ * Deconjugation + longest-match scanning + querying now happen natively in the
+ * Hoshidicts backend ([DictionaryDb.lookup]); this class maps the native results
+ * to [DictionaryEntry] via [HoshiEntryMapper] and preserves the public API its
+ * callers (overlay popup, search, parse tab, history) depend on.
  */
 class DictionaryEngine(context: Context) {
 
     private val dictionaryDb = DictionaryDb.getInstance(context)
-    private val transformer = LanguageTransformer()
-    private val gson = Gson()
 
     companion object {
         const val MAX_SEARCH_LENGTH = 20
+
+        // Headwords requested per lookup before per-dictionary expansion + sort.
+        private const val MAX_RESULTS = 32
 
         val ENTRY_COMPARATOR: Comparator<DictionaryEntry> =
             compareByDescending<DictionaryEntry> { it.matchedText.length }
@@ -33,82 +37,42 @@ class DictionaryEngine(context: Context) {
     }
 
     /**
-     * Find dictionary entries for text starting at a given position.
-     * Uses longest-first matching with deinflection.
-     * This is a blocking call - use findTermsAsync for coroutines.
-     *
-     * @param text The full text to search in
-     * @param startIndex The character index to start searching from (default 0)
-     * @return List of dictionary entries, sorted by match length then score
+     * Find dictionary entries for text starting at a given position, longest
+     * match first. Blocking — use [findTermsAsync] from coroutines.
      */
     fun findTerms(text: String, startIndex: Int = 0): List<DictionaryEntry> {
         if (startIndex >= text.length) return emptyList()
-
-        val searchText = text.substring(startIndex)
-        return findTermsBlocking(searchText)
+        return findTermsBlocking(text.substring(startIndex))
     }
 
-    /**
-     * Blocking version of term search (for use on background threads).
-     */
     private fun findTermsBlocking(searchText: String): List<DictionaryEntry> {
-        val results = mutableListOf<DictionaryEntry>()
-        val maxLen = minOf(searchText.length, MAX_SEARCH_LENGTH)
-
-        // Try progressively shorter substrings (longest first)
-        for (len in maxLen downTo 1) {
-            val query = searchText.substring(0, len)
-
-            // Get all deinflected variants
-            val variants = transformer.getVariants(query)
-
-            for (variant in variants) {
-                // Query database for this variant
-                val entities = dictionaryDb.findByExpressionOrReading(variant.text)
-
-                for (entity in entities) {
-                    // Convert to DictionaryEntry with match info
-                    val entry = entityToEntry(entity, query, variant)
-                    results.add(entry)
-                }
-            }
-        }
-
-        return results.sortedWith(ENTRY_COMPARATOR)
+        if (searchText.isEmpty()) return emptyList()
+        val scanLength = minOf(searchText.length, MAX_SEARCH_LENGTH)
+        val terms = dictionaryDb.lookup(searchText, MAX_RESULTS, scanLength)
+        return terms
+            .flatMap { HoshiEntryMapper.map(it, dictionaryDb) }
+            .sortedWith(ENTRY_COMPARATOR)
             .distinctBy { "${it.expression}|${it.reading}|${it.sourceDictId}" }
     }
 
-    /**
-     * Async version of findTerms
-     */
-    suspend fun findTermsAsync(searchText: String): List<DictionaryEntry> = withContext(Dispatchers.IO) {
-        findTermsBlocking(searchText)
-    }
+    suspend fun findTermsAsync(searchText: String): List<DictionaryEntry> =
+        withContext(Dispatchers.IO) { findTermsBlocking(searchText) }
 
     /**
-     * Scan the entire text for dictionary matches using longest-match.
-     * Returns all unique entries found, in order of appearance.
-     *
-     * @param text The full text to scan
-     * @return List of DictionaryEntry with position info
+     * Scan the entire text for dictionary matches using longest-match. Returns
+     * all unique entries found, in order of appearance.
      */
     fun findAllMatches(text: String): List<DictionaryEntryWithPosition> {
         val matches = mutableListOf<DictionaryEntryWithPosition>()
-        val seen = mutableSetOf<String>() // Track seen expressions to avoid duplicates
+        val seen = mutableSetOf<String>()
         var i = 0
-
         while (i < text.length) {
-            // Skip whitespace and punctuation
             val char = text[i]
             if (char.isWhitespace() || char in "。、！？「」『』（）…・") {
                 i++
                 continue
             }
-
-            // Try to find a match starting at this position
-            val entries = findTerms(text, i)
-            val bestEntry = entries.firstOrNull()
-
+            val bestEntry = findTerms(text, i).firstOrNull()
             if (bestEntry != null && bestEntry.matchedText.isNotEmpty()) {
                 val key = "${bestEntry.expression}|${bestEntry.reading}"
                 if (key !in seen) {
@@ -121,32 +85,21 @@ class DictionaryEngine(context: Context) {
                         )
                     )
                 }
-                // Skip past the matched text
                 i += bestEntry.matchedText.length
             } else {
-                // No match, move forward one character
                 i++
             }
         }
-
         return matches
     }
 
-    /**
-     * Async version of findAllMatches
-     */
-    suspend fun findAllMatchesAsync(text: String): List<DictionaryEntryWithPosition> = withContext(Dispatchers.IO) {
-        findAllMatches(text)
-    }
+    suspend fun findAllMatchesAsync(text: String): List<DictionaryEntryWithPosition> =
+        withContext(Dispatchers.IO) { findAllMatches(text) }
 
     /**
-     * Longest-match scan within [text]'s [start, end) substring, returning
-     * one [DictionaryWordMatch] per matched word with ALL candidate entries
-     * (same set the hover-cursor popup gets via [findTerms]).
-     *
-     * Used by the parse-tab to align dictionary lookups with Kuromoji's
-     * bunsetsu boundaries — call once per bunsetsu so each card surfaces
-     * every candidate for the matched word, not just the top one.
+     * Longest-match scan within [text]'s [start, end) substring, returning one
+     * [DictionaryWordMatch] per matched word with ALL candidate entries — used
+     * by the parse tab to align lookups with Kuromoji bunsetsu boundaries.
      */
     fun findAllMatchesGrouped(text: String, start: Int, end: Int): List<DictionaryWordMatch> {
         val matches = mutableListOf<DictionaryWordMatch>()
@@ -180,101 +133,27 @@ class DictionaryEngine(context: Context) {
         withContext(Dispatchers.IO) { findAllMatchesGrouped(text, start, end) }
 
     /**
-     * Search for a term with deinflection but without progressive substring shortening.
-     * Suitable for search box UI — looks up the full query and its deinflected forms only.
+     * Search for a term with deconjugation. Longest matches rank first, so a
+     * full-word query surfaces its exact entry above any sub-string matches.
      */
     suspend fun searchTerm(query: String): List<DictionaryEntry> = withContext(Dispatchers.IO) {
         if (query.isBlank()) return@withContext emptyList()
+        findTermsBlocking(query)
+    }
 
-        val results = mutableListOf<DictionaryEntry>()
-        val variants = transformer.getVariants(query)
-
-        for (variant in variants) {
-            val entities = dictionaryDb.findByExpressionOrReading(variant.text)
-            for (entity in entities) {
-                results.add(entityToEntry(entity, query, variant))
-            }
-        }
-
-        results.sortedWith(ENTRY_COMPARATOR)
+    /** Find exact matches for a term (by expression or reading, no deconjugation). */
+    suspend fun findExact(term: String): List<DictionaryEntry> = withContext(Dispatchers.IO) {
+        dictionaryDb.query(term)
+            .flatMap { HoshiEntryMapper.map(it, dictionaryDb) }
+            .sortedWith(ENTRY_COMPARATOR)
             .distinctBy { "${it.expression}|${it.reading}|${it.sourceDictId}" }
     }
 
-    /**
-     * Find exact match for a term (no deinflection)
-     */
-    suspend fun findExact(term: String): List<DictionaryEntry> = withContext(Dispatchers.IO) {
-        val entities = dictionaryDb.findByExpressionOrReading(term)
-        entities.map { entityToEntry(it, term, Variant(term, emptySet(), emptyList())) }
-    }
-
-    /**
-     * Check if the dictionary is loaded and has entries
-     */
     suspend fun isDictionaryLoaded(): Boolean = withContext(Dispatchers.IO) {
-        dictionaryDb.count() > 0
+        dictionaryDb.isValid()
     }
 
-    /**
-     * Get the count of dictionary entries
-     */
     suspend fun getDictionaryCount(): Int = withContext(Dispatchers.IO) {
         dictionaryDb.count()
-    }
-
-    private fun entityToEntry(
-        entity: TermData,
-        matchedText: String,
-        variant: Variant
-    ): DictionaryEntry {
-        val glossaryList = try {
-            val type = object : TypeToken<List<String>>() {}.type
-            gson.fromJson<List<String>>(entity.glossary, type) ?: listOf(entity.glossary)
-        } catch (e: Exception) {
-            listOf(entity.glossary)
-        }
-
-        val posList = try {
-            val type = object : TypeToken<List<String>>() {}.type
-            gson.fromJson<List<String>>(entity.partsOfSpeech, type) ?: emptyList()
-        } catch (e: Exception) {
-            if (entity.partsOfSpeech.isNotEmpty()) {
-                entity.partsOfSpeech.split(Regex("[,\\s]+")).map { it.trim() }.filter { it.isNotEmpty() }
-            } else {
-                emptyList()
-            }
-        }
-
-        // Build deinflection path string
-        val deinflectionPath = if (variant.path.isNotEmpty()) {
-            variant.path.joinToString(" > ")
-        } else {
-            ""
-        }
-
-        return DictionaryEntry(
-            id = entity.id,
-            expression = entity.expression,
-            reading = entity.reading,
-            glossary = glossaryList,
-            partsOfSpeech = posList,
-            score = entity.score,
-            matchedText = matchedText,
-            deinflectionPath = deinflectionPath,
-            source = DictionarySource.fromString(entity.source),
-            nameType = NameType.fromString(entity.nameType),
-            frequencyRank = entity.frequencyRank,
-            jpdbRank = entity.jpdbRank,
-            pitchDownstep = entity.pitchDownstep,
-            pitchDownsteps = entity.pitchDownsteps,
-            sourceDictId = entity.sourceDictId,
-            dictionaryTitle = entity.dictionaryTitle,
-            additionalFrequencies = entity.additionalFrequencies,
-            glossaryRich = entity.glossaryRich,
-            definitionTags = entity.tagMeta.keys.toList(),
-            tagMeta = entity.tagMeta,
-            inflectionChainLength = variant.path.size,
-            isExactMatch = (matchedText == entity.expression || matchedText == entity.reading)
-        )
     }
 }
