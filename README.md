@@ -123,7 +123,8 @@ The grammar library is a unified index of ~2,800 patterns linking out to existin
 - [Handbook of Japanese Grammar Patterns (HJG)](https://core6000.neocities.org/hjgp/) — original site is offline; HJG link-outs are rewritten to Internet Archive Wayback snapshots
 
 ### Core Libraries
-- [Yomitan](https://github.com/yomitan/yomitan) - Deinflection algorithm (GPL-3.0)
+- [Hoshidicts](https://github.com/Manhhao/hoshidicts) - Dictionary backend: Yomitan-zip import, lookup, and deconjugation (MIT, `main-mit` branch). Vendors glaze, zstd, libdeflate, xxHash, unordered_dense, and utfcpp.
+- [Yomitan](https://github.com/yomitan/yomitan) - Dictionary `.zip` format
 - [Kuromoji](https://github.com/atilika/kuromoji) - Japanese morphological analysis
 - [llama.cpp](https://github.com/ggml-org/llama.cpp) - On-device LLM inference (MIT)
 - [Google ML Kit](https://developers.google.com/ml-kit) - OCR and translation

@@ -109,8 +109,11 @@ class YomidroidAccessibilityService : AccessibilityService() {
     private var screenHeight = 0
     private var statusBarHeight = 0
 
-    // For double-tap detection
+    // For double-tap detection. The single-tap scan is deferred by the
+    // double-tap window so a follow-up tap can preempt it (toggling the cursor
+    // side) instead of firing a lookup first.
     private var lastTapTime = 0L
+    private var pendingTapRunnable: Runnable? = null
 
     // Store current OCR results for cursor-based lookup
     private var currentOcrResults: List<OcrResult> = emptyList()
@@ -2373,19 +2376,27 @@ class YomidroidAccessibilityService : AccessibilityService() {
                     if (isClick) {
                         val now = System.currentTimeMillis()
                         if (now - lastTapTime < DOUBLE_TAP_TIMEOUT_MS) {
-                            // Double tap - toggle cursor side (don't dismiss!)
+                            // Double tap - cancel the deferred single-tap scan and
+                            // toggle the cursor side instead (don't dismiss / scan!).
+                            pendingTapRunnable?.let { handler.removeCallbacks(it) }
+                            pendingTapRunnable = null
                             fabView?.toggleCursorSide()
                             Log.d(TAG, "Double tap - toggled cursor side")
+                            lastTapTime = 0L // reset so the next tap starts a fresh cycle
                         } else {
-                            // Single tap always re-scans. The previous "do
-                            // nothing if overlay visible" behavior produced
-                            // a confusing two-tap workflow: first tap to
-                            // dismiss, second tap to scan. captureScreen()
-                            // hides the FAB and showTextOverlay() replaces
-                            // any existing overlay, so this is safe.
-                            captureScreen()
+                            // Defer the single-tap re-scan by the double-tap window so
+                            // a follow-up tap can turn it into a cursor-side toggle.
+                            // captureScreen() hides the FAB and showTextOverlay()
+                            // replaces any existing overlay, so re-scanning is safe.
+                            lastTapTime = now
+                            pendingTapRunnable?.let { handler.removeCallbacks(it) }
+                            val tapRunnable = Runnable {
+                                pendingTapRunnable = null
+                                captureScreen()
+                            }
+                            pendingTapRunnable = tapRunnable
+                            handler.postDelayed(tapRunnable, DOUBLE_TAP_TIMEOUT_MS)
                         }
-                        lastTapTime = now
                     } else {
                         // Drag ended - apply physics-based fling
                         val vx = velocityTracker?.xVelocity ?: 0f
