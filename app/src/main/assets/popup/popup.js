@@ -121,12 +121,132 @@ function injectDictionaryCss(dictCssMap) {
     }
 }
 
+// Flatten nested CSS (the `&` syntax used by Jitendex and others) into flat
+// rules, then scope every selector under [data-dictionary="<name>"]. Flattening
+// is required because the app runs on Android System WebView builds older than
+// Chrome 112 (e.g. WebView 109), which cannot parse native CSS nesting — without
+// this, nested rules like the forms-table status glyphs are silently dropped.
 function scopeCss(css, dictName) {
     var scope = '[data-dictionary="' + dictName.replace(/"/g, '\\"') + '"]';
-    return css.replace(/([^{}]+)\{/g, function(match, selector) {
-        if (selector.trim().charAt(0) === '@') return match;
-        return scope + ' ' + selector.trim() + ' {';
-    });
+    return flattenAndScope(css.replace(/\/\*[\s\S]*?\*\//g, ''), scope);
+}
+
+// Conditional-group at-rules whose body contains nested style rules (so their
+// inner selectors still want scoping). Everything else (@font-face, @keyframes,
+// @page, @import, …) is emitted verbatim.
+var CSS_GROUP_AT_RULE = /^@(media|supports|container|scope|layer|document)\b/i;
+
+// Recursive-descent flattener + scoper: resolves `&` nesting into flat rules and
+// prefixes every selector with [data-dictionary="<name>"]. Comment/quote/bracket
+// aware. Required because older Android System WebView (< Chrome 112) cannot
+// parse native CSS nesting, so nested dictionary rules must be flattened first.
+function flattenAndScope(css, scope) {
+    var i = 0, n = css.length, output = '';
+
+    // Read until an unquoted {, }, or ;
+    function readChunk() {
+        var start = i, quote = null;
+        while (i < n) {
+            var c = css[i];
+            if (quote) {
+                if (c === quote && css[i - 1] !== '\\') quote = null;
+                i++;
+                continue;
+            }
+            if (c === '"' || c === "'") { quote = c; i++; continue; }
+            if (c === '{' || c === '}' || c === ';') break;
+            i++;
+        }
+        return css.substring(start, i);
+    }
+
+    // i sits just past a '{'. Return the block's inner text and advance past '}'.
+    function captureBlock() {
+        var start = i, depth = 1, quote = null;
+        while (i < n && depth > 0) {
+            var c = css[i++];
+            if (quote) { if (c === quote && css[i - 2] !== '\\') quote = null; continue; }
+            if (c === '"' || c === "'") quote = c;
+            else if (c === '{') depth++;
+            else if (c === '}') depth--;
+        }
+        return css.substring(start, depth === 0 ? i - 1 : i);
+    }
+
+    function resolve(parents, raw) {
+        var parts = splitTopLevel(raw, ',');
+        var res = [];
+        for (var p = 0; p < parts.length; p++) {
+            var sel = parts[p].trim();
+            if (!sel) continue;
+            if (!parents) { res.push(sel); continue; }
+            for (var q = 0; q < parents.length; q++) {
+                var parent = parents[q];
+                // Function replacement avoids `$` being treated specially.
+                if (sel.indexOf('&') >= 0) res.push(sel.replace(/&/g, function() { return parent; }));
+                else res.push(parent + ' ' + sel);
+            }
+        }
+        return res;
+    }
+
+    function emit(selectors, decls) {
+        if (!decls) return;
+        var scoped = [];
+        for (var s = 0; s < selectors.length; s++) {
+            var sel = selectors[s].trim();
+            if (sel) scoped.push(scope + ' ' + sel);
+        }
+        if (scoped.length) output += scoped.join(', ') + ' { ' + decls + ' }\n';
+    }
+
+    function parse(parents) {
+        var decls = '';
+        while (i < n) {
+            var chunk = readChunk();
+            var term = css[i];
+            i++; // consume terminator (or step past EOF)
+            if (term === '{') {
+                var sel = chunk.trim();
+                if (sel.charAt(0) === '@') {
+                    var inner = captureBlock();
+                    if (CSS_GROUP_AT_RULE.test(sel)) {
+                        output += sel + ' {\n' + flattenAndScope(inner, scope) + '}\n';
+                    } else {
+                        output += sel + ' {' + inner + '}\n'; // verbatim (fonts, keyframes, …)
+                    }
+                } else {
+                    parse(resolve(parents, sel));
+                }
+            } else { // ';' or '}' or EOF
+                var d = chunk.trim();
+                if (d) decls += d + '; ';
+                if (term === '}' || i > n) break;
+            }
+        }
+        if (parents) emit(parents, decls.trim());
+    }
+
+    parse(null);
+    return output;
+}
+
+// Split on `sep` at the top level only (ignoring separators inside [], (), or quotes).
+function splitTopLevel(str, sep) {
+    var parts = [], b = 0, p = 0, quote = null, cur = '';
+    for (var i = 0; i < str.length; i++) {
+        var c = str[i];
+        if (quote) { if (c === quote && str[i - 1] !== '\\') quote = null; cur += c; continue; }
+        if (c === '"' || c === "'") { quote = c; cur += c; continue; }
+        if (c === '[') b++;
+        else if (c === ']') b--;
+        else if (c === '(') p++;
+        else if (c === ')') p--;
+        if (c === sep && b === 0 && p === 0) { parts.push(cur); cur = ''; }
+        else cur += c;
+    }
+    if (cur.trim()) parts.push(cur);
+    return parts;
 }
 
 // ============================================================
@@ -294,8 +414,19 @@ function createGroupedEntry(group, groupIndex) {
         el.appendChild(readingRow);
     }
 
-    // --- Row 3: Inflection rules ---
-    if (first.deinflectionPath) {
+    // --- Row 3: Inflection rules (compact chips) ---
+    if (first.deinflectionSteps && first.deinflectionSteps.length) {
+        var inflection = createElement('div', 'inflection-rule-chain');
+        var chips = createElement('div', 'deinflection-chips');
+        var desc = createElement('div', 'deinflection-desc');
+        desc.style.display = 'none';
+        for (var s = 0; s < first.deinflectionSteps.length; s++) {
+            chips.appendChild(createDeinflectionTag(first.deinflectionSteps[s], desc));
+        }
+        inflection.appendChild(chips);
+        inflection.appendChild(desc);
+        el.appendChild(inflection);
+    } else if (first.deinflectionPath) {
         var inflection = createElement('div', 'inflection-rule-chain');
         inflection.textContent = '\u00AB ' + first.deinflectionPath;
         el.appendChild(inflection);
@@ -891,6 +1022,26 @@ function createTag(text, category) {
     return tag;
 }
 
+// A single compact deinflection chip. Tapping it reveals the full verbose
+// description (`detail`) in the shared [descEl] line below the chip row.
+function createDeinflectionTag(step, descEl) {
+    var tag = createElement('span', 'deinflection-tag');
+    tag.textContent = step.name;
+    if (step.description) {
+        tag.setAttribute('title', step.description);
+        tag.onclick = function() {
+            var showing = descEl.style.display !== 'none' && descEl.textContent === step.description;
+            if (showing) {
+                descEl.style.display = 'none';
+            } else {
+                descEl.textContent = step.description;
+                descEl.style.display = '';
+            }
+        };
+    }
+    return tag;
+}
+
 function createColorTag(text, color) {
     var tag = createElement('span', 'tag');
     if (color) {
@@ -1170,6 +1321,14 @@ function classifyAndWireLink(el, node) {
     });
 }
 
+// camelCase / snake_case / spaced → kebab-case, for data-sc-* attribute keys.
+function toKebabCase(s) {
+    return String(s)
+        .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+        .replace(/[_\s]+/g, '-')
+        .toLowerCase();
+}
+
 function applyNodeAttributes(el, node) {
     if (node.style && typeof node.style === 'object') {
         for (var key in node.style) {
@@ -1181,10 +1340,16 @@ function applyNodeAttributes(el, node) {
     if (node.data && typeof node.data === 'object') {
         for (var dkey in node.data) {
             if (!node.data.hasOwnProperty(dkey)) continue;
-            el.setAttribute('data-' + dkey, node.data[dkey]);
+            // Yomitan/Hoshireader convention: data-sc-<kebab-key>. A leading CJK
+            // char means no separating hyphen (e.g. Daijisen). Dictionary-shipped
+            // CSS (Jitendex forms tables, tag pills) targets these selectors.
+            var isCjk = /^[　-鿿豈-﫿]/.test(dkey);
+            el.setAttribute('data-sc' + (isCjk ? '' : '-') + toKebabCase(dkey), node.data[dkey]);
         }
     }
-    if (node['class']) el.className += ' sc-' + node['class'];
+    // Apply the dictionary's own class verbatim (do NOT prefix with sc-), so
+    // dictionary CSS selectors match. Internal sc-<tag> classes are set elsewhere.
+    if (node['class']) el.className += ' ' + node['class'];
     if (node.lang) el.lang = node.lang;
     if (node.colSpan) el.colSpan = node.colSpan;
     if (node.rowSpan) el.rowSpan = node.rowSpan;
