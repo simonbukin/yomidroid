@@ -228,6 +228,33 @@ body {
     margin: 0.1em 0;
 }
 
+/* Compact deinflection chips (replaces the single italic chain line) */
+.deinflection-chips {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25em;
+}
+.deinflection-tag {
+    display: inline-flex;
+    align-items: center;
+    font-size: 0.95em;
+    font-style: normal;
+    line-height: 1.5;
+    padding: 0.15em 0.5em;
+    border-radius: 0.3em;
+    white-space: nowrap;
+    background: var(--tag-default-bg);
+    color: var(--tag-default-color);
+    cursor: pointer;
+}
+.deinflection-desc {
+    font-size: 0.9em;
+    font-style: italic;
+    color: var(--reason-text-color);
+    margin-top: 0.2em;
+}
+
 /* ============================================================
    Tags
    ============================================================ */

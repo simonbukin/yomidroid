@@ -7,15 +7,15 @@ import org.json.JSONObject
 /**
  * Kotlin wrapper for the Hoshidicts (C++23) dictionary backend JNI interface.
  *
- * Hoshidicts owns the term/frequency/pitch/kanji lookup path: it imports Yomitan
+ * Hoshidicts owns the term/frequency/pitch lookup path: it imports Yomitan
  * `.zip` dictionaries into a compact mmap'd binary format and performs
- * Yomitan-style longest-match lookups with built-in deconjugation. Results cross
- * the JNI boundary as JSON; this class parses them into [HoshiTerm]/[HoshiKanji]
- * so [DictionaryEngine] can map them onto [DictionaryEntry].
+ * Yomitan-style longest-match lookups with built-in deinflection. Results cross
+ * the JNI boundary as JSON; this class parses them into [HoshiTerm] so
+ * [DictionaryEngine] can map them onto [DictionaryEntry].
  *
- * The native side holds a single [DictionaryQuery]+[Deconjugator]. Rebuild the
- * dictionary set with [reset] followed by `add*Dict` calls (in priority order)
- * whenever the installed-dictionary config changes — mirrors
+ * The native side holds a single DictionaryQuery + Yomitan deinflector. Rebuild
+ * the dictionary set with [reset] followed by `add*Dict` calls (in priority
+ * order) whenever the installed-dictionary config changes — mirrors
  * `DictionaryDb.reloadFromConfig`.
  */
 object HoshiDicts {
@@ -39,16 +39,13 @@ object HoshiDicts {
     private external fun nativeLoad(
         termPaths: Array<String>,
         freqPaths: Array<String>,
-        pitchPaths: Array<String>,
-        kanjiPaths: Array<String>
+        pitchPaths: Array<String>
     )
     private external fun nativeAddTermDict(path: String)
     private external fun nativeAddFreqDict(path: String)
     private external fun nativeAddPitchDict(path: String)
-    private external fun nativeAddKanjiDict(path: String)
     private external fun nativeLookup(text: String, maxResults: Int, scanLength: Int): String
     private external fun nativeQuery(expression: String): String
-    private external fun nativeQueryKanji(kanji: String): String
     private external fun nativeGetStyles(): String
     private external fun nativeGetMediaFile(dictName: String, mediaPath: String): ByteArray?
 
@@ -75,22 +72,19 @@ object HoshiDicts {
     fun load(
         termPaths: List<String>,
         freqPaths: List<String>,
-        pitchPaths: List<String>,
-        kanjiPaths: List<String>
+        pitchPaths: List<String>
     ) {
         ensureLibrary()
         nativeLoad(
             termPaths.toTypedArray(),
             freqPaths.toTypedArray(),
-            pitchPaths.toTypedArray(),
-            kanjiPaths.toTypedArray()
+            pitchPaths.toTypedArray()
         )
     }
 
     fun addTermDict(path: String) { ensureLibrary(); nativeAddTermDict(path) }
     fun addFreqDict(path: String) { ensureLibrary(); nativeAddFreqDict(path) }
     fun addPitchDict(path: String) { ensureLibrary(); nativeAddPitchDict(path) }
-    fun addKanjiDict(path: String) { ensureLibrary(); nativeAddKanjiDict(path) }
 
     /**
      * Longest-match lookup from the start of [text] (preprocess + deconjugate +
@@ -108,12 +102,6 @@ object HoshiDicts {
         ensureLibrary()
         if (expression.isEmpty()) return emptyList()
         return parseTerms(nativeQuery(expression))
-    }
-
-    /** Look up a single kanji across all enabled kanji dictionaries. */
-    fun queryKanji(kanji: String): HoshiKanji {
-        ensureLibrary()
-        return parseKanji(nativeQueryKanji(kanji))
     }
 
     /** Per-dictionary CSS (`styles.css` from the original Yomitan zips), title → CSS. */
@@ -145,7 +133,8 @@ object HoshiDicts {
                 title = o.optString("title", ""),
                 termCount = o.optInt("termCount", 0),
                 metaCount = o.optInt("metaCount", 0),
-                kanjiCount = o.optInt("kanjiCount", 0),
+                freqCount = o.optInt("freqCount", 0),
+                pitchCount = o.optInt("pitchCount", 0),
                 mediaCount = o.optInt("mediaCount", 0),
                 errors = o.optJSONArray("errors")?.let { arr ->
                     List(arr.length()) { arr.optString(it) }
@@ -153,7 +142,7 @@ object HoshiDicts {
             )
         } catch (e: Exception) {
             Log.e(TAG, "Failed to parse import result: ${e.message}")
-            HoshiImportResult(false, "", 0, 0, 0, 0, listOf(e.message ?: "parse error"))
+            HoshiImportResult(false, "", 0, 0, 0, 0, 0, listOf(e.message ?: "parse error"))
         }
     }
 
@@ -199,11 +188,18 @@ object HoshiDicts {
             }
         } ?: emptyList()
 
+        val steps = o.optJSONArray("steps")?.let { arr ->
+            List(arr.length()) { i ->
+                val s = arr.getJSONObject(i)
+                HoshiStep(name = s.optString("name"), description = s.optString("description"))
+            }
+        } ?: emptyList()
+
         return HoshiTerm(
             matched = o.optString("matched"),
             deinflected = o.optString("deinflected"),
             preprocessorSteps = o.optInt("preprocessorSteps", 0),
-            process = o.optJSONArray("process").toStringList(),
+            steps = steps,
             expression = o.optString("expression"),
             reading = o.optString("reading"),
             rules = o.optString("rules"),
@@ -211,38 +207,6 @@ object HoshiDicts {
             frequencies = frequencies,
             pitches = pitches
         )
-    }
-
-    private fun parseKanji(json: String): HoshiKanji {
-        return try {
-            val o = JSONObject(json)
-            val entries = o.optJSONArray("entries")?.let { arr ->
-                List(arr.length()) { i ->
-                    val e = arr.getJSONObject(i)
-                    val statsObj = e.optJSONObject("stats")
-                    val stats = HashMap<String, String>()
-                    if (statsObj != null) {
-                        val keys = statsObj.keys()
-                        while (keys.hasNext()) {
-                            val k = keys.next()
-                            stats[k] = statsObj.optString(k)
-                        }
-                    }
-                    HoshiKanjiEntry(
-                        dict = e.optString("dict"),
-                        onyomi = e.optString("onyomi"),
-                        kunyomi = e.optString("kunyomi"),
-                        tags = e.optString("tags"),
-                        definitions = e.optJSONArray("definitions").toStringList(),
-                        stats = stats
-                    )
-                }
-            } ?: emptyList()
-            HoshiKanji(character = o.optString("character"), entries = entries)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to parse kanji result: ${e.message}")
-            HoshiKanji("", emptyList())
-        }
     }
 
     private fun JSONArray?.toIntList(): List<Int> =
@@ -264,11 +228,14 @@ data class HoshiFreq(val dict: String, val values: List<Int>, val display: List<
 
 data class HoshiPitch(val dict: String, val positions: List<Int>)
 
+/** One deinflection step from native: compact display [name] + full [description]. */
+data class HoshiStep(val name: String, val description: String)
+
 data class HoshiTerm(
     val matched: String,
     val deinflected: String,
     val preprocessorSteps: Int,
-    val process: List<String>,
+    val steps: List<HoshiStep>,
     val expression: String,
     val reading: String,
     val rules: String,
@@ -277,23 +244,13 @@ data class HoshiTerm(
     val pitches: List<HoshiPitch>
 )
 
-data class HoshiKanjiEntry(
-    val dict: String,
-    val onyomi: String,
-    val kunyomi: String,
-    val tags: String,
-    val definitions: List<String>,
-    val stats: Map<String, String>
-)
-
-data class HoshiKanji(val character: String, val entries: List<HoshiKanjiEntry>)
-
 data class HoshiImportResult(
     val success: Boolean,
     val title: String,
     val termCount: Int,
     val metaCount: Int,
-    val kanjiCount: Int,
+    val freqCount: Int,
+    val pitchCount: Int,
     val mediaCount: Int,
     val errors: List<String>
 )

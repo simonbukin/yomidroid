@@ -67,6 +67,16 @@ object EntrySerializer {
         obj.put("glossary", JSONArray(entry.glossary))
         if (entry.glossaryRich != null) obj.put("glossaryRich", entry.glossaryRich)
         obj.put("deinflectionPath", entry.deinflectionPath)
+        if (entry.deinflectionSteps.isNotEmpty()) {
+            val stepsArr = JSONArray()
+            for (step in entry.deinflectionSteps) {
+                val stepObj = JSONObject()
+                stepObj.put("name", step.name)
+                stepObj.put("description", step.description)
+                stepsArr.put(stepObj)
+            }
+            obj.put("deinflectionSteps", stepsArr)
+        }
         obj.put("sourceLabel", entry.sourceLabel)
         obj.put("sourceDictId", entry.sourceDictId)
         obj.put("dictionaryTitle", entry.dictionaryTitle.ifEmpty { entry.sourceLabel })
