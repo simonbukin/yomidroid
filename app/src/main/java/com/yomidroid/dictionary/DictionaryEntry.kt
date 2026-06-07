@@ -59,7 +59,7 @@ data class DictionaryEntry(
     val score: Int,
     val matchedText: String = expression,
     val deinflectionPath: String = "",
-    val deinflectionSteps: List<DeconjugationLabels.Step> = emptyList(),
+    val deinflectionSteps: List<HoshiStep> = emptyList(),
     // Multi-dictionary support
     val source: DictionarySource = DictionarySource.JITENDEX,
     val nameType: NameType? = null,

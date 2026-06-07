@@ -127,7 +127,7 @@ class DictionaryImporter(private val context: Context) {
             return ImportResult(false, dictTitle = info.title, error = "Imported dictionary folder not found")
         }
         val relativeFolder = "$dictId/${folder.name}"
-        val entryCount = result.termCount + result.kanjiCount + result.metaCount
+        val entryCount = result.termCount + result.metaCount
 
         // Update config (dbFileName now stores the dictionary folder, relative to dictionaries/)
         onProgress("Finishing...", 0.9f)

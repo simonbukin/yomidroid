@@ -45,7 +45,7 @@ class HoshiDictsInstrumentedTest {
         assumeTrue("No imported dictionaries on device", termFolders.isNotEmpty())
 
         for (folder in termFolders) {
-            HoshiDicts.load(listOf(folder.absolutePath), emptyList(), emptyList(), emptyList())
+            HoshiDicts.load(listOf(folder.absolutePath), emptyList(), emptyList())
             val probes = listOf("水", "日本", "食べる", "water", "japan", "eat", "green", "goddess")
             val hits = probes.associateWith { HoshiDicts.lookup(it).size }
             Log.i(tag, "DICT '${folder.name}': ${hits.filterValues { it > 0 }}")
@@ -68,7 +68,7 @@ class HoshiDictsInstrumentedTest {
         Log.i(tag, "custom import success=${res.success} title='${res.title}' terms=${res.termCount}")
         assertTrue("import failed: ${res.errors}", res.success)
 
-        HoshiDicts.load(listOf(File(outDir, res.title).absolutePath), emptyList(), emptyList(), emptyList())
+        HoshiDicts.load(listOf(File(outDir, res.title).absolutePath), emptyList(), emptyList())
         for (word in listOf("水", "日本", "食べる", "綺麗")) {
             val results = HoshiDicts.lookup(word)
             Log.i(tag, "custom 和英 '$word' -> ${results.size}; first gloss=${results.firstOrNull()?.glossaries?.firstOrNull()?.glossaryJson?.take(80)}")
@@ -90,7 +90,7 @@ class HoshiDictsInstrumentedTest {
         val res = HoshiDicts.import(zip.absolutePath, outDir.absolutePath)
         val importMs = System.currentTimeMillis() - importStart
         Log.i(tag, "import success=${res.success} title='${res.title}' terms=${res.termCount} " +
-                "kanji=${res.kanjiCount} meta=${res.metaCount} in ${importMs}ms errors=${res.errors}")
+                "freq=${res.freqCount} pitch=${res.pitchCount} meta=${res.metaCount} in ${importMs}ms errors=${res.errors}")
         assertTrue("import failed: ${res.errors}", res.success)
         assertTrue("expected term entries", res.termCount > 0)
 
@@ -100,7 +100,7 @@ class HoshiDictsInstrumentedTest {
         Log.i(tag, "imported folder=${folder.name} size=${sizeKb}KB (source zip=${zip.length() / 1024}KB)")
 
         // Exercise the atomic load path the app uses (not reset+add).
-        HoshiDicts.load(listOf(folder.absolutePath), emptyList(), emptyList(), emptyList())
+        HoshiDicts.load(listOf(folder.absolutePath), emptyList(), emptyList())
 
         // Conjugated form — exercises the deconjugator (食べる ← 食べた).
         for (word in listOf("食べる", "食べた", "日本語", "見ない")) {
@@ -110,7 +110,7 @@ class HoshiDictsInstrumentedTest {
             val first = results.firstOrNull()
             Log.i(tag, "lookup '$word' -> ${results.size} results in ${lookupUs}ms; " +
                     "first=${first?.expression}/${first?.reading} matched='${first?.matched}' " +
-                    "process=${first?.process} gloss=${first?.glossaries?.firstOrNull()?.glossaryJson?.take(100)}")
+                    "steps=${first?.steps} gloss=${first?.glossaries?.firstOrNull()?.glossaryJson?.take(100)}")
             assertTrue("expected results for '$word'", results.isNotEmpty())
         }
 

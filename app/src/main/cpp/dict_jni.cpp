@@ -24,7 +24,7 @@
 
 #include <utf8.h>
 
-#include "hoshidicts/deconjugator.hpp"
+#include "hoshidicts/deinflector.hpp"
 #include "hoshidicts/importer.hpp"
 #include "hoshidicts/lookup.hpp"
 #include "hoshidicts/query.hpp"
@@ -37,10 +37,10 @@ namespace {
 
 std::shared_mutex g_mutex;
 std::unique_ptr<DictionaryQuery> g_query;
-std::unique_ptr<Deconjugator> g_decon;
+std::unique_ptr<Deinflector> g_deinf;
 
-void ensure_decon() {
-    if (!g_decon) g_decon = std::make_unique<Deconjugator>();
+void ensure_deinf() {
+    if (!g_deinf) g_deinf = std::make_unique<Deinflector>();
 }
 
 std::string jstring_to_utf8(JNIEnv* env, jstring s) {
@@ -104,16 +104,20 @@ void append_kv_str(std::string& out, const char* key, std::string_view val, bool
 // Serialize one term (optionally with lookup match context) into the JSON the
 // Kotlin side maps to one-or-more DictionaryEntry objects (one per glossary).
 void append_term(std::string& out, const std::string& matched, const std::string& deinflected,
-                 const std::vector<std::string>& process, int preprocessor_steps, const TermResult& t) {
+                 const std::vector<TransformGroup>& trace, int preprocessor_steps, const TermResult& t) {
     out += '{';
     append_kv_str(out, "matched", matched);
     append_kv_str(out, "deinflected", deinflected);
     out += "\"preprocessorSteps\":" + std::to_string(preprocessor_steps) + ',';
 
-    out += "\"process\":[";
-    for (size_t i = 0; i < process.size(); ++i) {
+    // Deinflection trace: one compact display name + full description per step.
+    out += "\"steps\":[";
+    for (size_t i = 0; i < trace.size(); ++i) {
         if (i) out += ',';
-        out += '"' + json_escape(process[i]) + '"';
+        out += '{';
+        append_kv_str(out, "name", trace[i].name);
+        append_kv_str(out, "description", trace[i].description, false);
+        out += '}';
     }
     out += "],";
 
@@ -198,7 +202,8 @@ JNIEXPORT jstring JNICALL Java_com_yomidroid_dictionary_HoshiDicts_nativeImport(
     append_kv_str(out, "title", r.title);
     out += "\"termCount\":" + std::to_string(r.term_count) + ',';
     out += "\"metaCount\":" + std::to_string(r.meta_count) + ',';
-    out += "\"kanjiCount\":" + std::to_string(r.kanji_count) + ',';
+    out += "\"freqCount\":" + std::to_string(r.freq_count) + ',';
+    out += "\"pitchCount\":" + std::to_string(r.pitch_count) + ',';
     out += "\"mediaCount\":" + std::to_string(r.media_count) + ',';
     out += "\"errors\":[";
     for (size_t i = 0; i < r.errors.size(); ++i) {
@@ -212,7 +217,7 @@ JNIEXPORT jstring JNICALL Java_com_yomidroid_dictionary_HoshiDicts_nativeImport(
 JNIEXPORT void JNICALL Java_com_yomidroid_dictionary_HoshiDicts_nativeReset(JNIEnv*, jobject) {
     std::unique_lock lock(g_mutex);
     g_query = std::make_unique<DictionaryQuery>();
-    ensure_decon();
+    ensure_deinf();
     LOGI("Dictionary query reset");
 }
 
@@ -220,11 +225,10 @@ JNIEXPORT void JNICALL Java_com_yomidroid_dictionary_HoshiDicts_nativeReset(JNIE
 // concurrent lookup never observes a half-built query (reset + adds as separate
 // locked calls would leave a window where the query is empty/partial).
 JNIEXPORT void JNICALL Java_com_yomidroid_dictionary_HoshiDicts_nativeLoad(
-    JNIEnv* env, jobject, jobjectArray termPaths, jobjectArray freqPaths, jobjectArray pitchPaths,
-    jobjectArray kanjiPaths) {
+    JNIEnv* env, jobject, jobjectArray termPaths, jobjectArray freqPaths, jobjectArray pitchPaths) {
     std::unique_lock lock(g_mutex);
     auto query = std::make_unique<DictionaryQuery>();
-    ensure_decon();
+    ensure_deinf();
 
     auto add_all = [&](jobjectArray arr, void (DictionaryQuery::*fn)(const std::string&)) {
         if (!arr) return;
@@ -238,7 +242,6 @@ JNIEXPORT void JNICALL Java_com_yomidroid_dictionary_HoshiDicts_nativeLoad(
     add_all(termPaths, &DictionaryQuery::add_term_dict);
     add_all(freqPaths, &DictionaryQuery::add_freq_dict);
     add_all(pitchPaths, &DictionaryQuery::add_pitch_dict);
-    add_all(kanjiPaths, &DictionaryQuery::add_kanji_dict);
 
     g_query = std::move(query);
     LOGI("Dictionary set rebuilt");
@@ -262,26 +265,20 @@ JNIEXPORT void JNICALL Java_com_yomidroid_dictionary_HoshiDicts_nativeAddPitchDi
     if (g_query) g_query->add_pitch_dict(jstring_to_utf8(env, jpath));
 }
 
-JNIEXPORT void JNICALL Java_com_yomidroid_dictionary_HoshiDicts_nativeAddKanjiDict(
-    JNIEnv* env, jobject, jstring jpath) {
-    std::unique_lock lock(g_mutex);
-    if (g_query) g_query->add_kanji_dict(jstring_to_utf8(env, jpath));
-}
-
 JNIEXPORT jstring JNICALL Java_com_yomidroid_dictionary_HoshiDicts_nativeLookup(
     JNIEnv* env, jobject, jstring jtext, jint maxResults, jint scanLength) {
     const std::string text = jstring_to_utf8(env, jtext);
     std::shared_lock lock(g_mutex);
-    if (!g_query || !g_decon) return utf8_to_jstring(env, "[]");
+    if (!g_query || !g_deinf) return utf8_to_jstring(env, "[]");
 
     std::string out = "[";
     try {
-        Lookup lk(*g_query, *g_decon);
+        Lookup lk(*g_query, *g_deinf);
         auto results = lk.lookup(text, maxResults, static_cast<size_t>(scanLength));
         for (size_t i = 0; i < results.size(); ++i) {
             if (i) out += ',';
             const auto& r = results[i];
-            append_term(out, r.matched, r.deinflected, r.process, r.preprocessor_steps, r.term);
+            append_term(out, r.matched, r.deinflected, r.trace, r.preprocessor_steps, r.term);
         }
     } catch (const std::exception& e) {
         LOGE("lookup threw: %s", e.what());
@@ -314,48 +311,6 @@ JNIEXPORT jstring JNICALL Java_com_yomidroid_dictionary_HoshiDicts_nativeQuery(
         LOGE("query threw unknown exception");
     }
     out += ']';
-    return utf8_to_jstring(env, out);
-}
-
-JNIEXPORT jstring JNICALL Java_com_yomidroid_dictionary_HoshiDicts_nativeQueryKanji(
-    JNIEnv* env, jobject, jstring jkanji) {
-    const std::string kanji = jstring_to_utf8(env, jkanji);
-    std::shared_lock lock(g_mutex);
-    if (!g_query) return utf8_to_jstring(env, "{\"character\":\"\",\"entries\":[]}");
-
-    std::string out = "{";
-    try {
-        auto result = g_query->query_kanji(kanji);
-        append_kv_str(out, "character", result.character);
-        out += "\"entries\":[";
-        for (size_t i = 0; i < result.entries.size(); ++i) {
-            const auto& e = result.entries[i];
-            if (i) out += ',';
-            out += '{';
-            append_kv_str(out, "dict", e.dict_name);
-            append_kv_str(out, "onyomi", e.onyomi);
-            append_kv_str(out, "kunyomi", e.kunyomi);
-            append_kv_str(out, "tags", e.tags);
-            out += "\"definitions\":[";
-            for (size_t j = 0; j < e.definitions.size(); ++j) {
-                if (j) out += ',';
-                out += '"' + json_escape(e.definitions[j]) + '"';
-            }
-            out += "],\"stats\":{";
-            bool first = true;
-            for (const auto& [k, v] : e.stats) {
-                if (!first) out += ',';
-                first = false;
-                out += '"' + json_escape(k) + "\":\"" + json_escape(v) + '"';
-            }
-            out += "}}";
-        }
-        out += ']';
-    } catch (const std::exception& ex) {
-        LOGE("query_kanji threw: %s", ex.what());
-        out += "\"character\":\"\",\"entries\":[]";
-    }
-    out += '}';
     return utf8_to_jstring(env, out);
 }
 

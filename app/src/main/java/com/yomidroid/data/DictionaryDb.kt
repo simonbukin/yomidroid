@@ -8,7 +8,6 @@ import com.yomidroid.config.DictSourceType
 import com.yomidroid.config.DictionaryConfigManager
 import com.yomidroid.config.InstalledDictionary
 import com.yomidroid.dictionary.HoshiDicts
-import com.yomidroid.dictionary.HoshiKanji
 import com.yomidroid.dictionary.HoshiTerm
 import java.io.File
 
@@ -129,7 +128,6 @@ class DictionaryDb private constructor(private val context: Context) {
         val termPaths = mutableListOf<String>()
         val freqPaths = mutableListOf<String>()
         val pitchPaths = mutableListOf<String>()
-        val kanjiPaths = mutableListOf<String>()
         val termIds = mutableListOf<String>()
         var entryTotal = 0
 
@@ -144,7 +142,9 @@ class DictionaryDb private constructor(private val context: Context) {
             when (dict.type) {
                 DictSourceType.FREQUENCY -> { freqPaths.add(path); freqOrder.add(dict.title) }
                 DictSourceType.PITCH -> pitchPaths.add(path)
-                DictSourceType.KANJI -> kanjiPaths.add(path)
+                // Native kanji-dict lookup is not supported on the Yomitan
+                // (`main`) backend; kanji dicts are skipped (left inert).
+                DictSourceType.KANJI -> Unit
                 else -> { termPaths.add(path); termIds.add(dict.id); entryTotal += dict.entryCount }
             }
             metaMap[dict.title] = DictMeta(
@@ -159,7 +159,7 @@ class DictionaryDb private constructor(private val context: Context) {
         }
 
         // Single atomic rebuild so concurrent lookups never see a partial set.
-        HoshiDicts.load(termPaths, freqPaths, pitchPaths, kanjiPaths)
+        HoshiDicts.load(termPaths, freqPaths, pitchPaths)
 
         val termCount = termPaths.size
         metaByTitleMap = metaMap
@@ -237,20 +237,6 @@ class DictionaryDb private constructor(private val context: Context) {
     val freqDictTitles: List<String> get() = freqTitles
 
     // --- Kanji ---
-
-    /** Look up a single kanji across enabled kanji dictionaries (first hit). */
-    fun findKanji(character: String): KanjiData? {
-        val result: HoshiKanji = HoshiDicts.queryKanji(character)
-        val entry = result.entries.firstOrNull() ?: return null
-        return KanjiData(
-            character = result.character,
-            onyomi = entry.onyomi,
-            kunyomi = entry.kunyomi,
-            tags = entry.tags,
-            meanings = org.json.JSONArray(entry.definitions).toString(),
-            stats = org.json.JSONObject(entry.stats as Map<*, *>).toString()
-        )
-    }
 
     /** Load (and cache) the kanji→words index for a term dictionary. */
     private fun kanjiIndexFor(dictId: String): Map<String, List<String>> {
@@ -338,13 +324,4 @@ data class TagMeta(
     val category: String,
     val notes: String,
     val score: Int
-)
-
-data class KanjiData(
-    val character: String,
-    val onyomi: String,
-    val kunyomi: String,
-    val tags: String,
-    val meanings: String, // JSON array
-    val stats: String     // JSON object
 )
